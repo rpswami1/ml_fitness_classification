@@ -132,18 +132,57 @@ if os.path.exists(csv_file):
         st.dataframe(df.head())
 
     # -------------------------------------------------
-    # 2. DATA PREPROCESSING & CLEANING
+    # 2. INITIAL DATA VISUALIZATION (Before Preprocessing)
     # -------------------------------------------------
-    st.header("2. Preprocessing & Cleaning")
+    st.header("2. Initial Data Visualization")
+    st.write("Visualizing raw features before any cleaning or engineering.")
     
-    # 2.1 Handling Corrupted Data
+    target_col_raw = 'fitness_category' # Assuming this is the target
+    
+    # Select numeric columns for visualization (attempting to parse numeric even if object for viz)
+    # We create a temporary copy for visualization to not affect the main df yet
+    df_viz = df.copy()
+    
+    # Try to convert potential numeric columns just for visualization purposes
     numeric_keywords = ['weight', 'height', 'age', 'bmi', 'score', 'income', 'rate', 'duration']
-    potential_numeric_cols = [c for c in df.columns if any(k in c.lower() for k in numeric_keywords)]
+    potential_numeric_cols = [c for c in df_viz.columns if any(k in c.lower() for k in numeric_keywords)]
+    for col in potential_numeric_cols:
+        df_viz[col] = pd.to_numeric(df_viz[col], errors='coerce')
+        
+    numeric_cols_viz = df_viz.select_dtypes(include=[np.number]).columns.tolist()
     
+    selected_feature = st.selectbox("Select Feature to Visualize (Raw Data)", numeric_cols_viz)
+    
+    if selected_feature:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader(f"Distribution of {selected_feature}")
+            fig_hist, ax_hist = plt.subplots()
+            # Drop NA for plotting
+            sns.histplot(df_viz[selected_feature].dropna(), kde=True, ax=ax_hist)
+            st.pyplot(fig_hist)
+            
+        with col2:
+            st.subheader(f"{selected_feature} vs Target")
+            fig_box, ax_box = plt.subplots()
+            if target_col_raw in df_viz.columns:
+                sns.boxplot(x=target_col_raw, y=selected_feature, data=df_viz, ax=ax_box)
+                st.pyplot(fig_box)
+            else:
+                st.warning(f"Target column '{target_col_raw}' not found.")
+
+    # -------------------------------------------------
+    # 3. DATA PREPROCESSING & CLEANING
+    # -------------------------------------------------
+    st.header("3. Preprocessing & Cleaning")
+    
+    # 3.1 Handling Corrupted Data
+    # Now we apply changes to the main 'df'
     for col in potential_numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # 2.2 Handling Missing Values
+    # 3.2 Handling Missing Values
     if df.isnull().values.any():
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
@@ -155,11 +194,11 @@ if os.path.exists(csv_file):
         st.success("Imputed missing values.")
 
     # -------------------------------------------------
-    # 3. FEATURE ENGINEERING
+    # 4. FEATURE ENGINEERING
     # -------------------------------------------------
-    st.header("3. Feature Engineering")
+    st.header("4. Feature Engineering")
     
-    # 3.1 BMI Calculation
+    # 4.1 BMI Calculation
     if 'weight' in df.columns and 'height' in df.columns:
         height_mean = df['height'].mean()
         if height_mean > 3:
@@ -168,7 +207,7 @@ if os.path.exists(csv_file):
             df['BMI'] = df['weight'] / (df['height'] ** 2)
         st.write("✅ Created feature: `BMI`")
 
-    # 3.2 One-Hot Encoding
+    # 4.2 One-Hot Encoding
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     target_col = 'fitness_category' 
     
@@ -182,9 +221,9 @@ if os.path.exists(csv_file):
     st.write("✅ Performed One-Hot Encoding.")
 
     # -------------------------------------------------
-    # 4. FEATURE SELECTION
+    # 5. FEATURE SELECTION
     # -------------------------------------------------
-    st.header("4. Feature Selection")
+    st.header("5. Feature Selection")
     
     st.subheader("Correlation Heatmap")
     fig_corr = plt.figure(figsize=(12, 10))
@@ -208,33 +247,6 @@ if os.path.exists(csv_file):
             st.info("No features dropped (all meet the correlation threshold).")
 
     st.write(f"Final Dataset Shape: {df.shape}")
-
-    # -------------------------------------------------
-    # 5. VISUALIZATION OF FEATURES
-    # -------------------------------------------------
-    st.header("5. Feature Visualization")
-    
-    # Select numeric columns for visualization
-    numeric_cols_viz = df.select_dtypes(include=[np.number]).columns.tolist()
-    if target_col in numeric_cols_viz:
-        numeric_cols_viz.remove(target_col)
-        
-    selected_feature = st.selectbox("Select Feature to Visualize", numeric_cols_viz)
-    
-    if selected_feature:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader(f"Distribution of {selected_feature}")
-            fig_hist, ax_hist = plt.subplots()
-            sns.histplot(df[selected_feature], kde=True, ax=ax_hist)
-            st.pyplot(fig_hist)
-            
-        with col2:
-            st.subheader(f"{selected_feature} vs Target")
-            fig_box, ax_box = plt.subplots()
-            sns.boxplot(x=target_col, y=selected_feature, data=df, ax=ax_box)
-            st.pyplot(fig_box)
 
     # -------------------------------------------------
     # 6. MODEL IMPLEMENTATION
