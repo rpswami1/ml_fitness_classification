@@ -126,6 +126,10 @@ elif not os.path.exists(csv_file):
 
 if os.path.exists(csv_file):
     df = pd.read_csv(csv_file)
+    
+    # Clean column names to avoid whitespace issues
+    df.columns = df.columns.str.strip()
+
     st.write(f"Dataset loaded. Shape: {df.shape}")
     
     with st.expander("Raw Data Preview"):
@@ -137,7 +141,16 @@ if os.path.exists(csv_file):
     st.header("2. Initial Data Visualization")
     st.write("Visualizing raw features before any cleaning or engineering.")
     
-    target_col_raw = 'fitness_category' # Assuming this is the target
+    target_col_raw = 'is_fit' 
+    
+    # Check if target column exists
+    if target_col_raw not in df.columns:
+        st.error(f"Target column '{target_col_raw}' not found in dataset. Available columns: {df.columns.tolist()}")
+        # Try to find a likely candidate
+        likely_targets = [c for c in df.columns if 'fitness' in c.lower() or 'category' in c.lower() or 'class' in c.lower()]
+        if likely_targets:
+            st.info(f"Did you mean one of these? {likely_targets}")
+            target_col_raw = st.selectbox("Select Target Column", likely_targets)
     
     # Select numeric columns for visualization (attempting to parse numeric even if object for viz)
     # We create a temporary copy for visualization to not affect the main df yet
@@ -177,12 +190,62 @@ if os.path.exists(csv_file):
     # -------------------------------------------------
     st.header("3. Preprocessing & Cleaning")
     
-    # 3.1 Handling Corrupted Data
+    st.subheader("3.1 Handling Specific Data Quality Issues")
+    
+    # 1. Handle Mixed Data Types in 'smokes'
+    if 'smokes' in df.columns:
+        st.write("Standardizing 'smokes' column (mixed types detected)...")
+        # Convert to string first to handle mixed types, then map
+        df['smokes'] = df['smokes'].astype(str).str.lower().str.strip()
+        # Map yes/no/1/0
+        smokes_map = {'yes': 1, 'no': 0, '1': 1, '0': 0, '1.0': 1, '0.0': 0}
+        df['smokes'] = df['smokes'].map(smokes_map)
+        # Fill any NaNs (unexpected values) with mode
+        if df['smokes'].isnull().any():
+             df['smokes'] = df['smokes'].fillna(df['smokes'].mode()[0])
+        st.write("✅ 'smokes' column standardized to binary (0/1).")
+        
+    # 2. Handle Missing Values in 'sleep_hours'
+    if 'sleep_hours' in df.columns:
+        missing_sleep = df['sleep_hours'].isnull().sum()
+        if missing_sleep > 0:
+            st.write(f"Imputing {missing_sleep} missing values in 'sleep_hours'...")
+            df['sleep_hours'] = df['sleep_hours'].fillna(df['sleep_hours'].median())
+            st.write("✅ 'sleep_hours' imputed with median.")
+            
+    # 3. Outlier Detection in 'weight_kg'
+    # Check for weight_kg or weight
+    weight_col = 'weight_kg' if 'weight_kg' in df.columns else ('weight' if 'weight' in df.columns else None)
+    
+    if weight_col:
+        st.write(f"Handling outliers in '{weight_col}' (IQR Method)...")
+        # Ensure numeric
+        df[weight_col] = pd.to_numeric(df[weight_col], errors='coerce')
+        
+        Q1 = df[weight_col].quantile(0.25)
+        Q3 = df[weight_col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        
+        outliers = ((df[weight_col] < lower_bound) | (df[weight_col] > upper_bound)).sum()
+        if outliers > 0:
+            # Cap/Clip outliers instead of removing to preserve data size if small
+            df[weight_col] = np.clip(df[weight_col], lower_bound, upper_bound)
+            st.write(f"✅ Capped {outliers} outliers in '{weight_col}' to IQR bounds.")
+        else:
+            st.write(f"No outliers detected in '{weight_col}'.")
+
+    st.subheader("3.2 General Cleaning")
+    
+    # 3.1 Handling Corrupted Data (General)
     # Now we apply changes to the main 'df'
     for col in potential_numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Skip columns we already handled specifically if needed, but safe to re-run
+        if col != 'smokes': 
+            df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # 3.2 Handling Missing Values
+    # 3.2 Handling Missing Values (General)
     if df.isnull().values.any():
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
@@ -191,7 +254,7 @@ if os.path.exists(csv_file):
         for col in object_cols:
             if not df[col].mode().empty:
                 df[col] = df[col].fillna(df[col].mode()[0])
-        st.success("Imputed missing values.")
+        st.success("Imputed remaining missing values.")
 
     # -------------------------------------------------
     # 4. FEATURE ENGINEERING
@@ -199,17 +262,24 @@ if os.path.exists(csv_file):
     st.header("4. Feature Engineering")
     
     # 4.1 BMI Calculation
-    if 'weight' in df.columns and 'height' in df.columns:
-        height_mean = df['height'].mean()
+    # Check for weight_kg/weight and height/height_m
+    w_col = 'weight_kg' if 'weight_kg' in df.columns else ('weight' if 'weight' in df.columns else None)
+    h_col = 'height_m' if 'height_m' in df.columns else ('height' if 'height' in df.columns else None)
+
+    if w_col and h_col:
+        # Check if height is likely in cm (> 3) or m (< 3)
+        height_mean = df[h_col].mean()
         if height_mean > 3:
-            df['BMI'] = df['weight'] / ((df['height'] / 100) ** 2)
+            # Assume cm, convert to m
+            df['BMI'] = df[w_col] / ((df[h_col] / 100) ** 2)
         else:
-            df['BMI'] = df['weight'] / (df['height'] ** 2)
-        st.write("✅ Created feature: `BMI`")
+            # Assume m
+            df['BMI'] = df[w_col] / (df[h_col] ** 2)
+        st.write(f"✅ Created feature: `BMI` from `{w_col}` and `{h_col}`")
 
     # 4.2 One-Hot Encoding
     categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    target_col = 'fitness_category' 
+    target_col = target_col_raw # Use the identified target column
     
     if target_col in categorical_cols:
         categorical_cols.remove(target_col)
@@ -235,9 +305,14 @@ if os.path.exists(csv_file):
     threshold = 0.1
     st.write(f"Applying Correlation Threshold: {threshold}")
     
+    # Check if target_col is still in correlation_matrix
     if target_col in correlation_matrix.columns:
         target_corr = correlation_matrix[target_col].abs()
         unnecessary_features = target_corr[target_corr < threshold].index.tolist()
+        
+        # SAFETY CHECK: Ensure target column is NOT dropped
+        # We use list comprehension to be absolutely sure we filter it out
+        unnecessary_features = [f for f in unnecessary_features if f != target_col]
         
         if unnecessary_features:
             st.write(f"Dropping low-impact features (< {threshold} correlation): {unnecessary_features}")
@@ -245,6 +320,8 @@ if os.path.exists(csv_file):
             st.success(f"Dropped {len(unnecessary_features)} features.")
         else:
             st.info("No features dropped (all meet the correlation threshold).")
+    else:
+        st.warning(f"Target column '{target_col}' not found in correlation matrix. Skipping feature selection based on target correlation.")
 
     st.write(f"Final Dataset Shape: {df.shape}")
 
@@ -254,84 +331,88 @@ if os.path.exists(csv_file):
     st.header("6. Model Implementation & Evaluation")
 
     # Splitting
-    X = df.drop(columns=[target_col])
-    y = df[target_col]
-    
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-    
-    # Model Dictionary
-    models = {
-        "Logistic Regression": LogisticRegression(max_iter=1000),
-        "Decision Tree": DecisionTreeClassifier(random_state=42),
-        "K-Nearest Neighbors": KNeighborsClassifier(),
-        "Naive Bayes (Gaussian)": GaussianNB(),
-        "Random Forest": RandomForestClassifier(random_state=42),
-        "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-    }
-
-    if st.button("Train All Models"):
-        st.write("Training models... please wait.")
-        results = []
+    # Ensure target_col is in df before dropping
+    if target_col in df.columns:
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
         
-        for name, model in models.items():
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            
-            # Calculate Metrics
-            acc = accuracy_score(y_test, y_pred)
-            prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-            rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-            f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
-            
-            # AUC Score (Handle multi-class if needed)
-            auc = "N/A"
-            try:
-                if hasattr(model, "predict_proba"):
-                    y_proba = model.predict_proba(X_test)
-                    # Check if binary or multi-class
-                    if len(np.unique(y)) == 2:
-                        auc = roc_auc_score(y_test, y_proba[:, 1])
-                    else:
-                        auc = roc_auc_score(y_test, y_proba, multi_class='ovr')
-            except Exception:
-                pass
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
 
-            results.append({
-                "Model": name,
-                "Accuracy": acc,
-                "AUC Score": auc,
-                "Precision": prec,
-                "Recall": rec,
-                "F1 Score": f1
-            })
-
-        # Display Results Table
-        results_df = pd.DataFrame(results)
-        st.subheader("Model Comparison")
-        st.dataframe(results_df.style.format({
-            "Accuracy": "{:.4f}",
-            "AUC Score": "{:.4f}", 
-            "Precision": "{:.4f}",
-            "Recall": "{:.4f}",
-            "F1 Score": "{:.4f}"
-        }))
-
-        # Visualization of Accuracy
-        st.subheader("Accuracy Comparison")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        sns.barplot(x="Accuracy", y="Model", data=results_df, palette="viridis", ax=ax)
-        plt.xlim(0, 1.0)
-        st.pyplot(fig)
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
         
-        # Visualization of F1 Score
-        st.subheader("F1 Score Comparison")
-        fig_f1, ax_f1 = plt.subplots(figsize=(10, 6))
-        sns.barplot(x="F1 Score", y="Model", data=results_df, palette="magma", ax=ax_f1)
-        plt.xlim(0, 1.0)
-        st.pyplot(fig_f1)
+        # Model Dictionary
+        models = {
+            "Logistic Regression": LogisticRegression(max_iter=1000),
+            "Decision Tree": DecisionTreeClassifier(random_state=42),
+            "K-Nearest Neighbors": KNeighborsClassifier(),
+            "Naive Bayes (Gaussian)": GaussianNB(),
+            "Random Forest": RandomForestClassifier(random_state=42),
+            "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+        }
+
+        if st.button("Train All Models"):
+            st.write("Training models... please wait.")
+            results = []
+            
+            for name, model in models.items():
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                
+                # Calculate Metrics
+                acc = accuracy_score(y_test, y_pred)
+                prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+                rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+                f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+                
+                # AUC Score (Handle multi-class if needed)
+                auc = "N/A"
+                try:
+                    if hasattr(model, "predict_proba"):
+                        y_proba = model.predict_proba(X_test)
+                        # Check if binary or multi-class
+                        if len(np.unique(y)) == 2:
+                            auc = roc_auc_score(y_test, y_proba[:, 1])
+                        else:
+                            auc = roc_auc_score(y_test, y_proba, multi_class='ovr')
+                except Exception:
+                    pass
+
+                results.append({
+                    "Model": name,
+                    "Accuracy": acc,
+                    "AUC Score": auc,
+                    "Precision": prec,
+                    "Recall": rec,
+                    "F1 Score": f1
+                })
+
+            # Display Results Table
+            results_df = pd.DataFrame(results)
+            st.subheader("Model Comparison")
+            st.dataframe(results_df.style.format({
+                "Accuracy": "{:.4f}",
+                "AUC Score": "{:.4f}", 
+                "Precision": "{:.4f}",
+                "Recall": "{:.4f}",
+                "F1 Score": "{:.4f}"
+            }))
+
+            # Visualization of Accuracy
+            st.subheader("Accuracy Comparison")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.barplot(x="Accuracy", y="Model", data=results_df, palette="viridis", ax=ax)
+            plt.xlim(0, 1.0)
+            st.pyplot(fig)
+            
+            # Visualization of F1 Score
+            st.subheader("F1 Score Comparison")
+            fig_f1, ax_f1 = plt.subplots(figsize=(10, 6))
+            sns.barplot(x="F1 Score", y="Model", data=results_df, palette="magma", ax=ax_f1)
+            plt.xlim(0, 1.0)
+            st.pyplot(fig_f1)
+    else:
+        st.error(f"Target column '{target_col}' not found in the final dataset. It might have been dropped during processing.")
 
 else:
     st.error("CSV file not found. Please check the download process.")
