@@ -106,35 +106,51 @@ MAIN_ZIP_PATH = os.path.join(CODE_DIR, MAIN_ZIP)
 
 st.header("1. Dataset Setup")
 
-# Check if the CSV already exists directly in the folder (from previous manual download or extraction)
-csv_file = os.path.join(CODE_DIR, "fitness_class_data.csv")
-# Also check for the file provided by the user: fitness_dataset.csv
-user_provided_csv = os.path.join(CODE_DIR, "fitness_dataset.csv")
+# Option to upload dataset
+uploaded_file = st.file_uploader("Upload your Fitness Dataset (CSV)", type=["csv"])
 
-if os.path.exists(user_provided_csv):
-    csv_file = user_provided_csv
-    st.success(f"Found local dataset: {os.path.basename(csv_file)}")
-elif not os.path.exists(csv_file):
-    # Only try to download if neither file exists
-    if not os.path.exists(MAIN_ZIP_PATH):
-        st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
-        try:
-            subprocess.run(
-                ["kaggle", "datasets", "download", "-d", DATASET_SLUG, "-p", CODE_DIR],
-                check=True
-            )
-            st.success("Download successful.")
-        except Exception as e:
-            st.error(f"Error downloading dataset: {e}")
-            st.info("Please ensure you have the Kaggle API installed and configured (kaggle.json).")
+df = None
 
-    if os.path.exists(MAIN_ZIP_PATH):
-        with zipfile.ZipFile(MAIN_ZIP_PATH, "r") as zip_ref:
-            zip_ref.extractall(CODE_DIR)
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file)
+        st.success(f"Uploaded dataset '{uploaded_file.name}' loaded successfully!")
+    except Exception as e:
+        st.error(f"Error reading uploaded file: {e}")
+else:
+    # Check if the CSV already exists directly in the folder (from previous manual download or extraction)
+    csv_file = os.path.join(CODE_DIR, "fitness_class_data.csv")
+    # Also check for the file provided by the user: fitness_dataset.csv
+    user_provided_csv = os.path.join(CODE_DIR, "fitness_dataset.csv")
 
-if os.path.exists(csv_file):
-    df = pd.read_csv(csv_file)
-    
+    if os.path.exists(user_provided_csv):
+        csv_file = user_provided_csv
+        st.success(f"Found local dataset: {os.path.basename(csv_file)}")
+        df = pd.read_csv(csv_file)
+    elif os.path.exists(csv_file):
+        df = pd.read_csv(csv_file)
+    else:
+        # Only try to download if neither file exists
+        if not os.path.exists(MAIN_ZIP_PATH):
+            st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
+            try:
+                subprocess.run(
+                    ["kaggle", "datasets", "download", "-d", DATASET_SLUG, "-p", CODE_DIR],
+                    check=True
+                )
+                st.success("Download successful.")
+            except Exception as e:
+                st.error(f"Error downloading dataset: {e}")
+                st.info("Please ensure you have the Kaggle API installed and configured (kaggle.json).")
+
+        if os.path.exists(MAIN_ZIP_PATH):
+            with zipfile.ZipFile(MAIN_ZIP_PATH, "r") as zip_ref:
+                zip_ref.extractall(CODE_DIR)
+        
+        if os.path.exists(csv_file):
+            df = pd.read_csv(csv_file)
+
+if df is not None:
     # Clean column names to avoid whitespace issues
     df.columns = df.columns.str.strip()
     
@@ -145,8 +161,8 @@ if os.path.exists(csv_file):
     
     st.write(f"Dataset loaded. Shape: {df.shape}")
     
-    with st.expander("Raw Data Preview"):
-        st.dataframe(df.head())
+    st.subheader("Raw Data Preview")
+    st.dataframe(df)
 
     # -------------------------------------------------
     # 2. INITIAL DATA VISUALIZATION (Before Preprocessing)
@@ -176,27 +192,67 @@ if os.path.exists(csv_file):
         df_viz[col] = pd.to_numeric(df_viz[col], errors='coerce')
         
     numeric_cols_viz = df_viz.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols_viz = df_viz.select_dtypes(include=['object', 'category']).columns.tolist()
     
-    selected_feature = st.selectbox("Select Feature to Visualize (Raw Data)", numeric_cols_viz)
+    # 2.1 Single Feature Visualization
+    st.subheader("2.1 Single Feature Distribution")
+    selected_feature = st.selectbox("Select Feature to Visualize", numeric_cols_viz + categorical_cols_viz)
     
     if selected_feature:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader(f"Distribution of {selected_feature}")
+            st.write(f"**Distribution of {selected_feature}**")
             fig_hist, ax_hist = plt.subplots()
-            # Drop NA for plotting
-            sns.histplot(df_viz[selected_feature].dropna(), kde=True, ax=ax_hist)
+            if selected_feature in numeric_cols_viz:
+                sns.histplot(df_viz[selected_feature].dropna(), kde=True, ax=ax_hist)
+            else:
+                sns.countplot(y=df_viz[selected_feature], ax=ax_hist, palette="viridis")
             st.pyplot(fig_hist)
             
         with col2:
-            st.subheader(f"{selected_feature} vs Target")
-            fig_box, ax_box = plt.subplots()
             if target_col_raw in df_viz.columns:
-                sns.boxplot(x=target_col_raw, y=selected_feature, data=df_viz, ax=ax_box)
+                st.write(f"**{selected_feature} vs Target ({target_col_raw})**")
+                fig_box, ax_box = plt.subplots()
+                if selected_feature in numeric_cols_viz:
+                    sns.boxplot(x=target_col_raw, y=selected_feature, data=df_viz, ax=ax_box)
+                else:
+                    sns.countplot(x=selected_feature, hue=target_col_raw, data=df_viz, ax=ax_box)
                 st.pyplot(fig_box)
-            else:
-                st.warning(f"Target column '{target_col_raw}' not found.")
+
+    # 2.2 Feature Comparisons (Bar Charts & Heatmaps)
+    st.subheader("2.2 Feature Comparisons & Relationships")
+    
+    # Correlation Heatmap (Numerical)
+    st.write("**Correlation Heatmap (Numerical Features)**")
+    if len(numeric_cols_viz) > 1:
+        fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
+        sns.heatmap(df_viz[numeric_cols_viz].corr(), annot=True, fmt=".2f", cmap='coolwarm', ax=ax_corr)
+        st.pyplot(fig_corr)
+    
+    # Bar Charts for Categorical Features vs Target
+    if categorical_cols_viz and target_col_raw in df_viz.columns:
+        st.write("**Categorical Features vs Target**")
+        # Filter out target from categorical list if present
+        cat_cols_to_plot = [c for c in categorical_cols_viz if c != target_col_raw]
+        
+        if cat_cols_to_plot:
+            # Create a grid layout
+            cols_per_row = 2
+            rows = (len(cat_cols_to_plot) + cols_per_row - 1) // cols_per_row
+            
+            for i in range(rows):
+                cols = st.columns(cols_per_row)
+                for j in range(cols_per_row):
+                    idx = i * cols_per_row + j
+                    if idx < len(cat_cols_to_plot):
+                        col_name = cat_cols_to_plot[idx]
+                        with cols[j]:
+                            fig_cat, ax_cat = plt.subplots()
+                            sns.countplot(x=col_name, hue=target_col_raw, data=df_viz, ax=ax_cat, palette="Set2")
+                            plt.title(f"{col_name} by Target")
+                            plt.xticks(rotation=45)
+                            st.pyplot(fig_cat)
 
     # -------------------------------------------------
     # 3. DATA PREPROCESSING & CLEANING
@@ -354,75 +410,100 @@ if os.path.exists(csv_file):
 
         X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
         
-        if st.button("Train All Models"):
-            st.write("Training models... please wait.")
-            results = []
-            
-            # Train Logistic Regression
-            _, metrics = train_logistic_regression(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "Logistic Regression"
-            results.append(metrics)
-            
-            # Train Decision Tree
-            _, metrics = train_decision_tree(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "Decision Tree"
-            results.append(metrics)
-            
-            # Train KNN
-            _, metrics = train_knn(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "K-Nearest Neighbors"
-            results.append(metrics)
-            
-            # Train Naive Bayes
-            _, metrics = train_naive_bayes(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "Naive Bayes (Gaussian)"
-            results.append(metrics)
-            
-            # Train Random Forest
-            _, metrics = train_random_forest(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "Random Forest"
-            results.append(metrics)
-            
-            # Train XGBoost
-            _, metrics = train_xgboost(X_train, X_test, y_train, y_test)
-            metrics["Model"] = "XGBoost"
-            results.append(metrics)
+        st.write("Training models automatically... please wait.")
+        results = []
+        
+        # Train Logistic Regression
+        _, train_m, test_m = train_logistic_regression(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "Logistic Regression"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "Logistic Regression"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
+        
+        # Train Decision Tree
+        _, train_m, test_m = train_decision_tree(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "Decision Tree"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "Decision Tree"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
+        
+        # Train KNN
+        _, train_m, test_m = train_knn(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "K-Nearest Neighbors"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "K-Nearest Neighbors"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
+        
+        # Train Naive Bayes
+        _, train_m, test_m = train_naive_bayes(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "Naive Bayes (Gaussian)"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "Naive Bayes (Gaussian)"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
+        
+        # Train Random Forest
+        _, train_m, test_m = train_random_forest(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "Random Forest"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "Random Forest"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
+        
+        # Train XGBoost
+        _, train_m, test_m = train_xgboost(X_train, X_test, y_train, y_test)
+        test_m["Model"] = "XGBoost"
+        test_m["Set"] = "Test"
+        train_m["Model"] = "XGBoost"
+        train_m["Set"] = "Train"
+        results.append(test_m)
+        results.append(train_m)
 
-            # Display Results Table
-            results_df = pd.DataFrame(results)
-            # Reorder columns
-            cols = ["Model", "Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
-            results_df = results_df[cols]
-            
-            st.subheader("Model Comparison Table")
-            st.dataframe(results_df.style.format({
-                "Accuracy": "{:.4f}",
-                "AUC Score": "{:.4f}", 
-                "Precision": "{:.4f}",
-                "Recall": "{:.4f}",
-                "F1 Score": "{:.4f}",
-                "MCC": "{:.4f}"
-            }))
+        # Display Results Table
+        results_df = pd.DataFrame(results)
+        # Reorder columns
+        cols = ["Model", "Set", "Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
+        results_df = results_df[cols]
+        
+        st.subheader("Model Comparison Table (Train vs Test)")
+        st.dataframe(results_df.style.format({
+            "Accuracy": "{:.4f}",
+            "AUC Score": "{:.4f}", 
+            "Precision": "{:.4f}",
+            "Recall": "{:.4f}",
+            "F1 Score": "{:.4f}",
+            "MCC": "{:.4f}"
+        }))
 
-            # Visualization of Metrics
-            st.subheader("Deep Comparison of Models")
-            
-            # Added Precision and Recall to the list of metrics to plot
-            metrics_to_plot = ["Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
-            
-            # Create a 2x3 grid for plots
-            cols_plot = st.columns(2)
-            
-            for i, metric in enumerate(metrics_to_plot):
-                with cols_plot[i % 2]:
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.barplot(x=metric, y="Model", data=results_df, palette="viridis", ax=ax)
-                    plt.title(f"{metric} Comparison")
-                    plt.xlim(0, 1.0)
-                    st.pyplot(fig)
+        # Visualization of Metrics
+        st.subheader("Deep Comparison of Models (Test Set)")
+        
+        # Filter for Test set only for visualization
+        test_results_df = results_df[results_df["Set"] == "Test"]
+        
+        metrics_to_plot = ["Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
+        
+        # Create a 2x3 grid for plots
+        cols_plot = st.columns(2)
+        
+        for i, metric in enumerate(metrics_to_plot):
+            with cols_plot[i % 2]:
+                fig, ax = plt.subplots(figsize=(8, 5))
+                sns.barplot(x=metric, y="Model", data=test_results_df, palette="viridis", ax=ax)
+                plt.title(f"{metric} Comparison (Test Set)")
+                plt.xlim(0, 1.0)
+                st.pyplot(fig)
 
     else:
         st.error(f"Target column '{target_col}' not found in the final dataset. It might have been dropped during processing.")
 
 else:
-    st.error("CSV file not found. Please check the download process.")
+    st.info("Please upload a dataset or ensure the default dataset is available.")
