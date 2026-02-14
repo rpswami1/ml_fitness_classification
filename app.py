@@ -20,10 +20,15 @@ def install_requirements():
 
     missing_packages = []
     for req in requirements:
+        # Handle version specifiers if present (e.g., pandas>=1.0)
         package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0]
+        
+        # Mapping for packages where import name differs from install name
         import_name = package_name
         if package_name == "scikit-learn":
             import_name = "sklearn"
+        elif package_name == "altair":
+            import_name = "altair"
         
         if importlib.util.find_spec(import_name) is None:
             missing_packages.append(req)
