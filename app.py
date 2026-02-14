@@ -20,10 +20,7 @@ def install_requirements():
 
     missing_packages = []
     for req in requirements:
-        # Handle version specifiers if present (e.g., pandas>=1.0)
         package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0]
-        
-        # Mapping for packages where import name differs from install name
         import_name = package_name
         if package_name == "scikit-learn":
             import_name = "sklearn"
@@ -48,7 +45,6 @@ def install_requirements():
     else:
         print("All dependencies are already satisfied.")
 
-# Run dependency check
 install_requirements()
 
 # -------------------------------------------------
@@ -173,9 +169,37 @@ if os.path.exists(csv_file):
     st.write("✅ Performed One-Hot Encoding.")
 
     # -------------------------------------------------
-    # 4. MODEL IMPLEMENTATION
+    # 4. FEATURE SELECTION
     # -------------------------------------------------
-    st.header("4. Model Implementation & Evaluation")
+    st.header("4. Feature Selection")
+    
+    st.subheader("Correlation Heatmap")
+    fig_corr = plt.figure(figsize=(12, 10))
+    correlation_matrix = df.corr()
+    sns.heatmap(correlation_matrix, annot=False, cmap='coolwarm')
+    st.pyplot(fig_corr)
+
+    # Automatic Feature Selection based on Correlation Threshold
+    threshold = 0.1
+    st.write(f"Applying Correlation Threshold: {threshold}")
+    
+    if target_col in correlation_matrix.columns:
+        target_corr = correlation_matrix[target_col].abs()
+        unnecessary_features = target_corr[target_corr < threshold].index.tolist()
+        
+        if unnecessary_features:
+            st.write(f"Dropping low-impact features (< {threshold} correlation): {unnecessary_features}")
+            df.drop(columns=unnecessary_features, inplace=True)
+            st.success(f"Dropped {len(unnecessary_features)} features.")
+        else:
+            st.info("No features dropped (all meet the correlation threshold).")
+
+    st.write(f"Final Dataset Shape: {df.shape}")
+
+    # -------------------------------------------------
+    # 5. MODEL IMPLEMENTATION
+    # -------------------------------------------------
+    st.header("5. Model Implementation & Evaluation")
 
     # Splitting
     X = df.drop(columns=[target_col])
