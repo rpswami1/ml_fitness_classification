@@ -407,14 +407,19 @@ if os.path.exists(csv_file):
             # Visualization of Metrics
             st.subheader("Deep Comparison of Models")
             
-            metrics_to_plot = ["Accuracy", "AUC Score", "F1 Score", "MCC"]
+            # Added Precision and Recall to the list of metrics to plot
+            metrics_to_plot = ["Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
             
-            for metric in metrics_to_plot:
-                fig, ax = plt.subplots(figsize=(10, 5))
-                sns.barplot(x=metric, y="Model", data=results_df, palette="viridis", ax=ax)
-                plt.title(f"{metric} Comparison")
-                plt.xlim(0, 1.0)
-                st.pyplot(fig)
+            # Create a 2x3 grid for plots
+            cols_plot = st.columns(2)
+            
+            for i, metric in enumerate(metrics_to_plot):
+                with cols_plot[i % 2]:
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    sns.barplot(x=metric, y="Model", data=results_df, palette="viridis", ax=ax)
+                    plt.title(f"{metric} Comparison")
+                    plt.xlim(0, 1.0)
+                    st.pyplot(fig)
 
     else:
         st.error(f"Target column '{target_col}' not found in the final dataset. It might have been dropped during processing.")
