@@ -1,18 +1,4 @@
 import sys
-import types
-
-# -------------------------------------------------
-# PATCH FOR PYTHON 3.13 (Missing imghdr)
-# -------------------------------------------------
-# imghdr was removed in Python 3.13, but Streamlit still imports it.
-# We inject a dummy module into sys.modules to prevent ModuleNotFoundError.
-if sys.version_info >= (3, 13):
-    if 'imghdr' not in sys.modules:
-        imghdr_mock = types.ModuleType('imghdr')
-        imghdr_mock.what = lambda file, h=None: None
-        imghdr_mock.tests = []
-        sys.modules['imghdr'] = imghdr_mock
-
 import subprocess
 import importlib.util
 import os
@@ -43,7 +29,7 @@ def install_requirements():
             import_name = "sklearn"
         elif package_name == "altair":
             import_name = "altair"
-
+        
         if importlib.util.find_spec(import_name) is None:
             missing_packages.append(req)
 
@@ -112,23 +98,31 @@ MAIN_ZIP_PATH = os.path.join(CODE_DIR, MAIN_ZIP)
 
 st.header("1. Dataset Setup")
 
-if not os.path.exists(MAIN_ZIP_PATH):
-    st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
-    try:
-        subprocess.run(
-            ["kaggle", "datasets", "download", "-d", DATASET_SLUG, "-p", CODE_DIR],
-            check=True
-        )
-        st.success("Download successful.")
-    except Exception as e:
-        st.error(f"Error downloading dataset: {e}")
-        st.info("Please ensure you have the Kaggle API installed and configured (kaggle.json).")
-
-if os.path.exists(MAIN_ZIP_PATH):
-    with zipfile.ZipFile(MAIN_ZIP_PATH, "r") as zip_ref:
-        zip_ref.extractall(CODE_DIR)
-
+# Check if the CSV already exists directly in the folder (from previous manual download or extraction)
 csv_file = os.path.join(CODE_DIR, "fitness_class_data.csv")
+# Also check for the file provided by the user: fitness_dataset.csv
+user_provided_csv = os.path.join(CODE_DIR, "fitness_dataset.csv")
+
+if os.path.exists(user_provided_csv):
+    csv_file = user_provided_csv
+    st.success(f"Found local dataset: {os.path.basename(csv_file)}")
+elif not os.path.exists(csv_file):
+    # Only try to download if neither file exists
+    if not os.path.exists(MAIN_ZIP_PATH):
+        st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
+        try:
+            subprocess.run(
+                ["kaggle", "datasets", "download", "-d", DATASET_SLUG, "-p", CODE_DIR],
+                check=True
+            )
+            st.success("Download successful.")
+        except Exception as e:
+            st.error(f"Error downloading dataset: {e}")
+            st.info("Please ensure you have the Kaggle API installed and configured (kaggle.json).")
+
+    if os.path.exists(MAIN_ZIP_PATH):
+        with zipfile.ZipFile(MAIN_ZIP_PATH, "r") as zip_ref:
+            zip_ref.extractall(CODE_DIR)
 
 if os.path.exists(csv_file):
     df = pd.read_csv(csv_file)
@@ -216,9 +210,36 @@ if os.path.exists(csv_file):
     st.write(f"Final Dataset Shape: {df.shape}")
 
     # -------------------------------------------------
-    # 5. MODEL IMPLEMENTATION
+    # 5. VISUALIZATION OF FEATURES
     # -------------------------------------------------
-    st.header("5. Model Implementation & Evaluation")
+    st.header("5. Feature Visualization")
+    
+    # Select numeric columns for visualization
+    numeric_cols_viz = df.select_dtypes(include=[np.number]).columns.tolist()
+    if target_col in numeric_cols_viz:
+        numeric_cols_viz.remove(target_col)
+        
+    selected_feature = st.selectbox("Select Feature to Visualize", numeric_cols_viz)
+    
+    if selected_feature:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader(f"Distribution of {selected_feature}")
+            fig_hist, ax_hist = plt.subplots()
+            sns.histplot(df[selected_feature], kde=True, ax=ax_hist)
+            st.pyplot(fig_hist)
+            
+        with col2:
+            st.subheader(f"{selected_feature} vs Target")
+            fig_box, ax_box = plt.subplots()
+            sns.boxplot(x=target_col, y=selected_feature, data=df, ax=ax_box)
+            st.pyplot(fig_box)
+
+    # -------------------------------------------------
+    # 6. MODEL IMPLEMENTATION
+    # -------------------------------------------------
+    st.header("6. Model Implementation & Evaluation")
 
     # Splitting
     X = df.drop(columns=[target_col])
@@ -292,6 +313,13 @@ if os.path.exists(csv_file):
         sns.barplot(x="Accuracy", y="Model", data=results_df, palette="viridis", ax=ax)
         plt.xlim(0, 1.0)
         st.pyplot(fig)
+        
+        # Visualization of F1 Score
+        st.subheader("F1 Score Comparison")
+        fig_f1, ax_f1 = plt.subplots(figsize=(10, 6))
+        sns.barplot(x="F1 Score", y="Model", data=results_df, palette="magma", ax=ax_f1)
+        plt.xlim(0, 1.0)
+        st.pyplot(fig_f1)
 
 else:
     st.error("CSV file not found. Please check the download process.")
