@@ -1,4 +1,18 @@
 import sys
+import types
+
+# -------------------------------------------------
+# PATCH FOR PYTHON 3.13 (Missing imghdr)
+# -------------------------------------------------
+# imghdr was removed in Python 3.13, but Streamlit still imports it.
+# We inject a dummy module into sys.modules to prevent ModuleNotFoundError.
+if sys.version_info >= (3, 13):
+    if 'imghdr' not in sys.modules:
+        imghdr_mock = types.ModuleType('imghdr')
+        imghdr_mock.what = lambda file, h=None: None
+        imghdr_mock.tests = []
+        sys.modules['imghdr'] = imghdr_mock
+
 import subprocess
 import importlib.util
 import os
@@ -29,8 +43,6 @@ def install_requirements():
             import_name = "sklearn"
         elif package_name == "altair":
             import_name = "altair"
-        elif package_name == "imghdr":
-            import_name = "imghdr"
 
         if importlib.util.find_spec(import_name) is None:
             missing_packages.append(req)
