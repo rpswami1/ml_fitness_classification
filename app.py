@@ -68,13 +68,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import GaussianNB
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+
+# Import models from the 'model' directory
+# Ensure the directory is in the path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
+
+try:
+    from model.logistic_regression import train_logistic_regression
+    from model.decision_tree import train_decision_tree
+    from model.knn import train_knn
+    from model.naive_bayes import train_naive_bayes
+    from model.random_forest import train_random_forest
+    from model.xgboost_model import train_xgboost
+except ImportError as e:
+    st.error(f"Error importing model modules: {e}")
+    st.stop()
 
 # -------------------------------------------------
 # APP CONFIG
@@ -129,7 +137,12 @@ if os.path.exists(csv_file):
     
     # Clean column names to avoid whitespace issues
     df.columns = df.columns.str.strip()
-
+    
+    # Rename fitness_category to is_fit if present
+    if 'fitness_category' in df.columns and 'is_fit' not in df.columns:
+        df.rename(columns={'fitness_category': 'is_fit'}, inplace=True)
+        st.info("Renamed 'fitness_category' column to 'is_fit'.")
+    
     st.write(f"Dataset loaded. Shape: {df.shape}")
     
     with st.expander("Raw Data Preview"):
@@ -341,76 +354,68 @@ if os.path.exists(csv_file):
 
         X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
         
-        # Model Dictionary
-        models = {
-            "Logistic Regression": LogisticRegression(max_iter=1000),
-            "Decision Tree": DecisionTreeClassifier(random_state=42),
-            "K-Nearest Neighbors": KNeighborsClassifier(),
-            "Naive Bayes (Gaussian)": GaussianNB(),
-            "Random Forest": RandomForestClassifier(random_state=42),
-            "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-        }
-
         if st.button("Train All Models"):
             st.write("Training models... please wait.")
             results = []
             
-            for name, model in models.items():
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                
-                # Calculate Metrics
-                acc = accuracy_score(y_test, y_pred)
-                prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-                rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-                f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
-                
-                # AUC Score (Handle multi-class if needed)
-                auc = "N/A"
-                try:
-                    if hasattr(model, "predict_proba"):
-                        y_proba = model.predict_proba(X_test)
-                        # Check if binary or multi-class
-                        if len(np.unique(y)) == 2:
-                            auc = roc_auc_score(y_test, y_proba[:, 1])
-                        else:
-                            auc = roc_auc_score(y_test, y_proba, multi_class='ovr')
-                except Exception:
-                    pass
-
-                results.append({
-                    "Model": name,
-                    "Accuracy": acc,
-                    "AUC Score": auc,
-                    "Precision": prec,
-                    "Recall": rec,
-                    "F1 Score": f1
-                })
+            # Train Logistic Regression
+            _, metrics = train_logistic_regression(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "Logistic Regression"
+            results.append(metrics)
+            
+            # Train Decision Tree
+            _, metrics = train_decision_tree(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "Decision Tree"
+            results.append(metrics)
+            
+            # Train KNN
+            _, metrics = train_knn(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "K-Nearest Neighbors"
+            results.append(metrics)
+            
+            # Train Naive Bayes
+            _, metrics = train_naive_bayes(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "Naive Bayes (Gaussian)"
+            results.append(metrics)
+            
+            # Train Random Forest
+            _, metrics = train_random_forest(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "Random Forest"
+            results.append(metrics)
+            
+            # Train XGBoost
+            _, metrics = train_xgboost(X_train, X_test, y_train, y_test)
+            metrics["Model"] = "XGBoost"
+            results.append(metrics)
 
             # Display Results Table
             results_df = pd.DataFrame(results)
-            st.subheader("Model Comparison")
+            # Reorder columns
+            cols = ["Model", "Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
+            results_df = results_df[cols]
+            
+            st.subheader("Model Comparison Table")
             st.dataframe(results_df.style.format({
                 "Accuracy": "{:.4f}",
                 "AUC Score": "{:.4f}", 
                 "Precision": "{:.4f}",
                 "Recall": "{:.4f}",
-                "F1 Score": "{:.4f}"
+                "F1 Score": "{:.4f}",
+                "MCC": "{:.4f}"
             }))
 
-            # Visualization of Accuracy
-            st.subheader("Accuracy Comparison")
-            fig, ax = plt.subplots(figsize=(10, 6))
-            sns.barplot(x="Accuracy", y="Model", data=results_df, palette="viridis", ax=ax)
-            plt.xlim(0, 1.0)
-            st.pyplot(fig)
+            # Visualization of Metrics
+            st.subheader("Deep Comparison of Models")
             
-            # Visualization of F1 Score
-            st.subheader("F1 Score Comparison")
-            fig_f1, ax_f1 = plt.subplots(figsize=(10, 6))
-            sns.barplot(x="F1 Score", y="Model", data=results_df, palette="magma", ax=ax_f1)
-            plt.xlim(0, 1.0)
-            st.pyplot(fig_f1)
+            metrics_to_plot = ["Accuracy", "AUC Score", "F1 Score", "MCC"]
+            
+            for metric in metrics_to_plot:
+                fig, ax = plt.subplots(figsize=(10, 5))
+                sns.barplot(x=metric, y="Model", data=results_df, palette="viridis", ax=ax)
+                plt.title(f"{metric} Comparison")
+                plt.xlim(0, 1.0)
+                st.pyplot(fig)
+
     else:
         st.error(f"Target column '{target_col}' not found in the final dataset. It might have been dropped during processing.")
 
