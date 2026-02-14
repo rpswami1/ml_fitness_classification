@@ -29,7 +29,9 @@ def install_requirements():
             import_name = "sklearn"
         elif package_name == "altair":
             import_name = "altair"
-        
+        elif package_name == "imghdr":
+            import_name = "imghdr"
+
         if importlib.util.find_spec(import_name) is None:
             missing_packages.append(req)
 
