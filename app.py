@@ -77,13 +77,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
 
 # Import models from the 'model' directory
 # Ensure the directory is in the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
 
 try:
-    from model.logistic_regression import train_logistic_regression
+    from model.logistic_regression import train_logistic_regression, calculate_metrics
     from model.decision_tree import train_decision_tree
     from model.knn import train_knn
     from model.naive_bayes import train_naive_bayes
@@ -575,13 +576,130 @@ if uploaded_file and selected_models:
         st.error(f"Missing columns: {missing_cols}")
         st.stop()
 
-    X_test = test_df[feature_columns]
+    # -------------------------------------------------
+    # TEST DATA PREPROCESSING & EDA
+    # -------------------------------------------------
+    st.subheader("Test Data Analysis (EDA)")
+
+    # Preprocess Test Data (Cleaning & Engineering)
+    # We need to apply the same cleaning steps as training data
+    # Re-using the logic from Section 3 & 4 but applied to test_df
+
+    # 1. Standardize 'smokes'
+    if 'smokes' in test_df.columns:
+        test_df['smokes'] = test_df['smokes'].astype(str).str.lower().str.strip()
+        smokes_map = {'yes': 1, 'no': 0, '1': 1, '0': 0, '1.0': 1, '0.0': 0}
+        test_df['smokes'] = test_df['smokes'].map(smokes_map)
+        if test_df['smokes'].isnull().any():
+             test_df['smokes'] = test_df['smokes'].fillna(test_df['smokes'].mode()[0])
+
+    # 2. Impute 'sleep_hours'
+    if 'sleep_hours' in test_df.columns:
+        test_df['sleep_hours'] = test_df['sleep_hours'].fillna(test_df['sleep_hours'].median())
+
+    # 3. Handle Outliers in 'weight_kg' (Capping)
+    weight_col = 'weight_kg' if 'weight_kg' in test_df.columns else ('weight' if 'weight' in test_df.columns else None)
+    if weight_col:
+        test_df[weight_col] = pd.to_numeric(test_df[weight_col], errors='coerce')
+        Q1 = test_df[weight_col].quantile(0.25)
+        Q3 = test_df[weight_col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        test_df[weight_col] = np.clip(test_df[weight_col], lower_bound, upper_bound)
+
+    # 4. General Numeric Cleaning
+    numeric_keywords = ['weight', 'height', 'age', 'bmi', 'score', 'income', 'rate', 'duration']
+    potential_numeric_cols = [c for c in test_df.columns if any(k in c.lower() for k in numeric_keywords)]
+    for col in potential_numeric_cols:
+        if col != 'smokes':
+            test_df[col] = pd.to_numeric(test_df[col], errors='coerce')
+
+    # 5. General Imputation
+    numeric_cols = test_df.select_dtypes(include=[np.number]).columns
+    test_df[numeric_cols] = test_df[numeric_cols].fillna(test_df[numeric_cols].median())
+
+    object_cols = test_df.select_dtypes(include=['object']).columns
+    for col in object_cols:
+        if not test_df[col].mode().empty:
+            test_df[col] = test_df[col].fillna(test_df[col].mode()[0])
+
+    # 6. Feature Engineering: BMI
+    w_col = 'weight_kg' if 'weight_kg' in test_df.columns else ('weight' if 'weight' in test_df.columns else None)
+    h_col = 'height_m' if 'height_m' in test_df.columns else ('height' if 'height' in test_df.columns else None)
+
+    if w_col and h_col:
+        height_mean = test_df[h_col].mean()
+        if height_mean > 3: # Assume cm
+            test_df['BMI'] = test_df[w_col] / ((test_df[h_col] / 100) ** 2)
+        else: # Assume m
+            test_df['BMI'] = test_df[w_col] / (test_df[h_col] ** 2)
+
+    # Visualizations for Test Data
+    test_numeric_cols = test_df.select_dtypes(include=[np.number]).columns.tolist()
+
+    # Heatmap
+    if len(test_numeric_cols) > 1:
+        st.write("**Test Data Correlation Heatmap**")
+        fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
+        sns.heatmap(test_df[test_numeric_cols].corr(), annot=True, fmt=".2f", cmap='coolwarm', ax=ax_corr)
+        st.pyplot(fig_corr)
+
+    # Bar Charts vs Target (if target exists)
+    if target_col in test_df.columns:
+        st.write("**Test Data Features vs Target**")
+        all_features = [c for c in test_df.columns if c != target_col]
+        if all_features:
+            cols_per_row = 2
+            rows = (len(all_features) + cols_per_row - 1) // cols_per_row
+            for i in range(rows):
+                cols = st.columns(cols_per_row)
+                for j in range(cols_per_row):
+                    idx = i * cols_per_row + j
+                    if idx < len(all_features):
+                        col_name = all_features[idx]
+                        with cols[j]:
+                            fig, ax = plt.subplots()
+                            if col_name in test_numeric_cols:
+                                sns.barplot(x=target_col, y=col_name, data=test_df, ax=ax, palette="viridis")
+                                plt.title(f"Mean {col_name} by Target (Test)")
+                            else:
+                                sns.countplot(x=col_name, hue=target_col, data=test_df, ax=ax, palette="Set2")
+                                plt.title(f"{col_name} Distribution by Target (Test)")
+                                plt.xticks(rotation=45)
+                            st.pyplot(fig)
+
+    # Prepare for Prediction
+    # One-Hot Encoding
+    categorical_cols = test_df.select_dtypes(include=['object', 'category']).columns.tolist()
+    if target_col in categorical_cols:
+        categorical_cols.remove(target_col)
+
+    test_df_encoded = pd.get_dummies(test_df, columns=categorical_cols, drop_first=True)
+
+    X_test = test_df_encoded.drop(columns=[target_col]) if target_col in test_df_encoded.columns else test_df_encoded
+
+    # Align columns with training data
+    for col in feature_columns:
+        if col not in X_test.columns:
+            X_test[col] = 0
+    X_test = X_test[feature_columns] # Ensure order and selection matches training
+
     X_test_scaled = scaler.transform(X_test)
 
     if target_col in test_df.columns:
         if le is not None:
-            test_df[target_col] = le.transform(test_df[target_col])
-        y_true = test_df[target_col]
+            # Handle potential unseen labels in target
+            try:
+                y_true = le.transform(test_df[target_col])
+            except:
+                 # Fallback: if test data has labels not in training, we can't evaluate properly
+                 # For binary classification 0/1 or 'Fit'/'Unfit', this is less likely if cleaned
+                 # Re-fitting a temporary encoder just to get numbers for metrics (assuming same classes)
+                 le_temp = LabelEncoder()
+                 y_true = le_temp.fit_transform(test_df[target_col])
+        else:
+             y_true = test_df[target_col]
     else:
         st.error("Target column missing in test data.")
         st.stop()
@@ -591,6 +709,8 @@ if uploaded_file and selected_models:
     import plotly.graph_objects as go
 
     results = []
+
+    st.subheader("Detailed Model Evaluation")
 
     for name in selected_models:
 
@@ -614,6 +734,33 @@ if uploaded_file and selected_models:
         }
 
         results.append(metrics)
+
+        # Confusion Matrix & Report per Model
+        with st.expander(f"Detailed Report: {name}"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write("**Confusion Matrix**")
+                cm = confusion_matrix(y_true, y_pred)
+
+                # Extract TN, FP, FN, TP
+                if cm.shape == (2, 2):
+                    tn, fp, fn, tp = cm.ravel()
+                    st.write(f"True Negatives: {tn}")
+                    st.write(f"False Positives: {fp}")
+                    st.write(f"False Negatives: {fn}")
+                    st.write(f"True Positives: {tp}")
+
+                fig_cm, ax_cm = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm)
+                plt.xlabel('Predicted')
+                plt.ylabel('Actual')
+                st.pyplot(fig_cm)
+
+            with col2:
+                st.write("**Classification Report**")
+                report = classification_report(y_true, y_pred, output_dict=True)
+                st.dataframe(pd.DataFrame(report).transpose())
 
     test_results_df = pd.DataFrame(results)
 
@@ -711,6 +858,53 @@ if uploaded_file and selected_models:
                         markers=True)
 
     st.plotly_chart(fig_drift, use_container_width=True)
+
+    # ----------------------------
+    # FINAL CONCLUSIONS (Train vs Test)
+    # ----------------------------
+    st.header("8. Final Conclusions: Train vs Test Analysis")
+
+    # Combine Train (Baseline) and Test metrics for comparison
+    comparison_data = []
+
+    for name in selected_models:
+        # Get Train metrics
+        train_m = baseline_metrics[name]
+        for metric, value in train_m.items():
+            comparison_data.append({
+                "Model": name,
+                "Set": "Train",
+                "Metric": metric,
+                "Value": value
+            })
+
+        # Get Test metrics
+        test_row = test_results_df[test_results_df["Model"] == name].iloc[0]
+        for metric in ["Accuracy", "Precision", "Recall", "F1 Score", "AUC Score", "MCC"]:
+             comparison_data.append({
+                "Model": name,
+                "Set": "Test",
+                "Metric": metric,
+                "Value": test_row[metric]
+            })
+
+    comp_df = pd.DataFrame(comparison_data)
+
+    st.write("### Comparative Analysis Graphs")
+
+    # Faceted plot for all metrics
+    fig_comp = px.bar(comp_df, x="Model", y="Value", color="Set", barmode="group",
+                      facet_col="Metric", facet_col_wrap=2,
+                      title="Train vs Test Performance across Metrics")
+    st.plotly_chart(fig_comp, use_container_width=True)
+
+    st.write("""
+    ### Conclusion
+    
+    *   **Overfitting Check**: If the 'Train' bars are significantly higher than the 'Test' bars (especially for Accuracy and F1 Score), the model might be overfitting.
+    *   **Generalization**: Models where Train and Test scores are close demonstrate good generalization to new data.
+    *   **Best Performer**: Look for the model with the highest consistent scores across both sets, particularly in F1 Score and MCC for imbalanced datasets.
+    """)
 
 else:
     st.info("Please upload a dataset or ensure the default dataset is available.")
