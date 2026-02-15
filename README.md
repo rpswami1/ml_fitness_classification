@@ -5,7 +5,7 @@
 ![Scikit-Learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
 ![XGBoost](https://img.shields.io/badge/XGBoost-Ensemble-green?style=for-the-badge)
 
-This project implements an **end-to-end Machine Learning workflow** to predict whether an individual is **"Fit"** or **"Not Fit"** based on health and lifestyle metrics. The implementation includes robust data cleaning, feature engineering, and a comparative analysis of multiple classification models through an interactive **Streamlit dashboard**.
+In this project, we've built a complete Machine Learning pipeline designed to determine if someone is "Fit" or "Not Fit" by analyzing their health and lifestyle data. We didn't just throw data at a model; we carefully cleaned it, engineered meaningful features, and then put several classification models to the test. Everything is brought together in an interactive Streamlit dashboard, making it easy to visualize and compare the results.
 
 ---
 
@@ -95,7 +95,7 @@ pip install -r requirements.txt
 ### 2. Run the Streamlit App
 Launch the interactive dashboard:
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 ### 3. Application Workflow

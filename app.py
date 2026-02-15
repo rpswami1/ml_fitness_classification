@@ -2,6 +2,7 @@ import sys
 import subprocess
 import importlib.util
 import os
+import io
 
 # -------------------------------------------------
 # 0. AUTO-INSTALL DEPENDENCIES FROM requirements.txt
@@ -170,7 +171,7 @@ if df is not None:
     st.write(f"Dataset loaded. Shape: {df.shape}")
 
     st.subheader("Raw Data Preview")
-    st.dataframe(df)
+    st.dataframe(df.head(10))
 
     # -------------------------------------------------
     # 2. INITIAL DATA VISUALIZATION (Before Preprocessing)
@@ -398,7 +399,7 @@ if df is not None:
     if target_col in correlation_matrix.columns:
         target_corr = correlation_matrix[target_col].abs()
         unnecessary_features = target_corr[target_corr < threshold].index.tolist()
-        
+
         # SAFETY CHECK: Ensure target column is NOT dropped
         # We use list comprehension to be absolutely sure we filter it out
         unnecessary_features = [f for f in unnecessary_features if f != target_col]
@@ -710,3 +711,6 @@ if uploaded_file and selected_models:
                         markers=True)
 
     st.plotly_chart(fig_drift, use_container_width=True)
+
+else:
+    st.info("Please upload a dataset or ensure the default dataset is available.")
