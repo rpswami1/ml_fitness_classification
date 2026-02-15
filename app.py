@@ -230,29 +230,36 @@ if df is not None:
         sns.heatmap(df_viz[numeric_cols_viz].corr(), annot=True, fmt=".2f", cmap='coolwarm', ax=ax_corr)
         st.pyplot(fig_corr)
     
-    # Bar Charts for Categorical Features vs Target
-    if categorical_cols_viz and target_col_raw in df_viz.columns:
-        st.write("**Categorical Features vs Target**")
-        # Filter out target from categorical list if present
-        cat_cols_to_plot = [c for c in categorical_cols_viz if c != target_col_raw]
+    # Bar Charts for All Features vs Target
+    if target_col_raw in df_viz.columns:
+        st.write("**All Features vs Target (Bar Charts)**")
         
-        if cat_cols_to_plot:
+        # Get all features excluding target
+        all_features = [c for c in df_viz.columns if c != target_col_raw]
+        
+        if all_features:
             # Create a grid layout
             cols_per_row = 2
-            rows = (len(cat_cols_to_plot) + cols_per_row - 1) // cols_per_row
+            rows = (len(all_features) + cols_per_row - 1) // cols_per_row
             
             for i in range(rows):
                 cols = st.columns(cols_per_row)
                 for j in range(cols_per_row):
                     idx = i * cols_per_row + j
-                    if idx < len(cat_cols_to_plot):
-                        col_name = cat_cols_to_plot[idx]
+                    if idx < len(all_features):
+                        col_name = all_features[idx]
                         with cols[j]:
-                            fig_cat, ax_cat = plt.subplots()
-                            sns.countplot(x=col_name, hue=target_col_raw, data=df_viz, ax=ax_cat, palette="Set2")
-                            plt.title(f"{col_name} by Target")
-                            plt.xticks(rotation=45)
-                            st.pyplot(fig_cat)
+                            fig, ax = plt.subplots()
+                            if col_name in numeric_cols_viz:
+                                # Bar chart of mean value vs target
+                                sns.barplot(x=target_col_raw, y=col_name, data=df_viz, ax=ax, palette="viridis")
+                                plt.title(f"Mean {col_name} by Target")
+                            else:
+                                # Count plot for categorical
+                                sns.countplot(x=col_name, hue=target_col_raw, data=df_viz, ax=ax, palette="Set2")
+                                plt.title(f"{col_name} Distribution by Target")
+                                plt.xticks(rotation=45)
+                            st.pyplot(fig)
 
     # -------------------------------------------------
     # 3. DATA PREPROCESSING & CLEANING
@@ -352,7 +359,12 @@ if df is not None:
     
     if target_col in categorical_cols:
         categorical_cols.remove(target_col)
-        le = LabelEncoder()
+        if "label_encoder" not in st.session_state:
+            le = LabelEncoder()
+            df[target_col] = le.fit_transform(df[target_col])
+            st.session_state.label_encoder = le
+        else:
+            le = st.session_state.label_encoder
         df[target_col] = le.fit_transform(df[target_col])
         st.write(f"✅ Label Encoded target: `{target_col}`")
 
@@ -394,116 +406,368 @@ if df is not None:
 
     st.write(f"Final Dataset Shape: {df.shape}")
 
-    # -------------------------------------------------
-    # 6. MODEL IMPLEMENTATION
-    # -------------------------------------------------
-    st.header("6. Model Implementation & Evaluation")
 
-    # Splitting
-    # Ensure target_col is in df before dropping
-    if target_col in df.columns:
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-        
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+# -------------------------------------------------
+# 6. MODEL IMPLEMENTATION & PERSISTENT TRAINING
+# -------------------------------------------------
+st.header("6. Model Implementation & Evaluation")
 
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-        
-        st.write("Training models automatically... please wait.")
-        results = []
-        
-        # Train Logistic Regression
-        _, train_m, test_m = train_logistic_regression(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "Logistic Regression"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "Logistic Regression"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
-        
-        # Train Decision Tree
-        _, train_m, test_m = train_decision_tree(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "Decision Tree"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "Decision Tree"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
-        
-        # Train KNN
-        _, train_m, test_m = train_knn(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "K-Nearest Neighbors"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "K-Nearest Neighbors"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
-        
-        # Train Naive Bayes
-        _, train_m, test_m = train_naive_bayes(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "Naive Bayes (Gaussian)"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "Naive Bayes (Gaussian)"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
-        
-        # Train Random Forest
-        _, train_m, test_m = train_random_forest(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "Random Forest"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "Random Forest"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
-        
-        # Train XGBoost
-        _, train_m, test_m = train_xgboost(X_train, X_test, y_train, y_test)
-        test_m["Model"] = "XGBoost"
-        test_m["Set"] = "Test"
-        train_m["Model"] = "XGBoost"
-        train_m["Set"] = "Train"
-        results.append(test_m)
-        results.append(train_m)
+if "trained_models" not in st.session_state:
+    st.session_state.trained_models = {}
 
-        # Display Results Table
-        results_df = pd.DataFrame(results)
-        # Reorder columns
-        cols = ["Model", "Set", "Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
-        results_df = results_df[cols]
-        
-        st.subheader("Model Comparison Table (Train vs Test)")
-        st.dataframe(results_df.style.format({
-            "Accuracy": "{:.4f}",
-            "AUC Score": "{:.4f}", 
-            "Precision": "{:.4f}",
-            "Recall": "{:.4f}",
-            "F1 Score": "{:.4f}",
-            "MCC": "{:.4f}"
-        }))
+if "baseline_metrics" not in st.session_state:
+    st.session_state.baseline_metrics = {}
 
-        # Visualization of Metrics
-        st.subheader("Deep Comparison of Models (Test Set)")
-        
-        # Filter for Test set only for visualization
-        test_results_df = results_df[results_df["Set"] == "Test"]
-        
-        metrics_to_plot = ["Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
-        
-        # Create a 2x3 grid for plots
-        cols_plot = st.columns(2)
-        
-        for i, metric in enumerate(metrics_to_plot):
-            with cols_plot[i % 2]:
-                fig, ax = plt.subplots(figsize=(8, 5))
-                sns.barplot(x=metric, y="Model", data=test_results_df, palette="viridis", ax=ax)
-                plt.title(f"{metric} Comparison (Test Set)")
-                plt.xlim(0, 1.0)
-                st.pyplot(fig)
+if not st.session_state.trained_models:
 
-    else:
-        st.error(f"Target column '{target_col}' not found in the final dataset. It might have been dropped during processing.")
+    st.write("Training models (this runs only once)...")
+
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=42
+    )
+
+    # Save scaler & features for later use
+    st.session_state.scaler = scaler
+    st.session_state.feature_columns = X.columns
+    st.session_state.X_train = X_train
+    st.session_state.y_train = y_train
+    st.session_state.df = df
+
+    results = []
+
+    model_functions = {
+        "Logistic Regression": train_logistic_regression,
+        "Decision Tree": train_decision_tree,
+        "K-Nearest Neighbors": train_knn,
+        "Naive Bayes (Gaussian)": train_naive_bayes,
+        "Random Forest": train_random_forest,
+        "XGBoost": train_xgboost
+    }
+
+    for model_name, train_func in model_functions.items():
+
+        model, train_m, test_m = train_func(X_train, X_test, y_train, y_test)
+
+        # Store trained model
+        st.session_state.trained_models[model_name] = model
+
+        # Store baseline (Train metrics)
+        st.session_state.baseline_metrics[model_name] = {
+            "Accuracy": train_m["Accuracy"],
+            "Precision": train_m["Precision"],
+            "Recall": train_m["Recall"],
+            "F1 Score": train_m["F1 Score"],
+            "AUC Score": train_m["AUC Score"],
+            "MCC": train_m["MCC"]
+        }
+
+        test_m["Model"] = model_name
+        test_m["Set"] = "Test"
+        train_m["Model"] = model_name
+        train_m["Set"] = "Train"
+
+        results.append(train_m)
+        results.append(test_m)
+
+    results_df = pd.DataFrame(results)
+
+    st.success("Models trained and stored successfully.")
 
 else:
-    st.info("Please upload a dataset or ensure the default dataset is available.")
+    st.success("Models already trained — using persisted models.")
+
+# Display comparison table
+results_display = pd.DataFrame([
+    {
+        "Model": name,
+        **st.session_state.baseline_metrics[name]
+    }
+    for name in st.session_state.trained_models.keys()
+])
+
+st.subheader("Training Baseline Metrics")
+numeric_cols = results_display.select_dtypes(include=["number"]).columns
+
+st.dataframe(
+    results_display.style.format(
+        {col: "{:.4f}" for col in numeric_cols}
+    )
+)
+
+
+# -------------------------------------------------
+# 7. ENTERPRISE ML ANALYTICS & DRIFT DASHBOARD
+# -------------------------------------------------
+st.header("🚀 Enterprise ML Analytics Dashboard")
+
+import plotly.graph_objects as go
+import plotly.express as px
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, matthews_corrcoef,
+    confusion_matrix, roc_curve
+)
+from scipy.stats import ks_2samp
+
+# -------------------------------------------------
+# SAFETY CHECK
+# -------------------------------------------------
+if "trained_models" not in st.session_state or not st.session_state.trained_models:
+    st.warning("No trained models found. Please ensure Section 6 runs successfully.")
+    st.stop()
+
+scaler = st.session_state.scaler
+feature_columns = st.session_state.feature_columns
+baseline_metrics = st.session_state.baseline_metrics
+train_df = st.session_state.df
+
+# -------------------------------------------------
+# SIDEBAR CONTROLS
+# -------------------------------------------------
+with st.sidebar:
+    st.subheader("📂 Data Management")
+
+    template = train_df.sample(min(20, len(train_df)))
+    st.download_button(
+        "📥 Download Production Template",
+        template.to_csv(index=False).encode("utf-8"),
+        "production_test_template.csv",
+        "text/csv"
+    )
+
+    st.divider()
+    st.subheader("🤖 Model Selection")
+
+    model_names = list(st.session_state.trained_models.keys())
+
+    comparison_mode = st.multiselect(
+        "Select Models to Compare",
+        options=model_names,
+        default=model_names
+    )
+
+# -------------------------------------------------
+# TEST FILE UPLOAD
+# -------------------------------------------------
+uploaded_test_file = st.file_uploader("Upload Production Test CSV", type=["csv"])
+
+if uploaded_test_file:
+
+    test_df = pd.read_csv(uploaded_test_file)
+    test_df.columns = test_df.columns.str.strip()
+
+    st.success(f"Loaded {len(test_df)} records.")
+
+    # -------------------------------------------------
+    # PREPROCESSING (Same as Training)
+    # -------------------------------------------------
+    if 'fitness_category' in test_df.columns and 'is_fit' not in test_df.columns:
+        test_df.rename(columns={'fitness_category': 'is_fit'}, inplace=True)
+
+    for col in potential_numeric_cols:
+        if col in test_df.columns:
+            test_df[col] = pd.to_numeric(test_df[col], errors='coerce')
+
+    numeric_cols_test = test_df.select_dtypes(include=[np.number]).columns
+    test_df[numeric_cols_test] = test_df[numeric_cols_test].fillna(test_df[numeric_cols_test].median())
+
+    object_cols_test = test_df.select_dtypes(include=['object']).columns
+    for col in object_cols_test:
+        test_df[col] = test_df[col].fillna(test_df[col].mode()[0])
+
+    if w_col and h_col and w_col in test_df.columns and h_col in test_df.columns:
+        height_mean = test_df[h_col].mean()
+        if height_mean > 3:
+            test_df["BMI"] = test_df[w_col] / ((test_df[h_col] / 100) ** 2)
+        else:
+            test_df["BMI"] = test_df[w_col] / (test_df[h_col] ** 2)
+
+    if target_col in test_df.columns:
+        test_df[target_col] = le.transform(test_df[target_col])
+
+    test_df = pd.get_dummies(test_df)
+
+    X_test_custom = test_df.reindex(columns=feature_columns, fill_value=0)
+    X_test_scaled = scaler.transform(X_test_custom)
+
+    y_true = test_df[target_col]
+
+    # -------------------------------------------------
+    # METRICS ENGINE
+    # -------------------------------------------------
+    all_metrics = []
+    roc_data = []
+    cm_data = {}
+
+    for name in comparison_mode:
+
+        model = st.session_state.trained_models[name]
+
+        y_pred = model.predict(X_test_scaled)
+        y_prob = model.predict_proba(X_test_scaled)[:, 1] if hasattr(model, "predict_proba") else y_pred
+
+        metrics = {
+            "Model": name,
+            "Accuracy": accuracy_score(y_true, y_pred),
+            "Precision": precision_score(y_true, y_pred, zero_division=0),
+            "Recall": recall_score(y_true, y_pred, zero_division=0),
+            "F1 Score": f1_score(y_true, y_pred, zero_division=0),
+            "AUC": roc_auc_score(y_true, y_prob),
+            "MCC": matthews_corrcoef(y_true, y_pred)
+        }
+
+        all_metrics.append(metrics)
+
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        roc_data.append({"name": name, "fpr": fpr, "tpr": tpr})
+
+        cm_data[name] = confusion_matrix(y_true, y_pred)
+
+    perf_df = pd.DataFrame(all_metrics)
+
+    # -------------------------------------------------
+    # LEADERBOARD
+    # -------------------------------------------------
+    st.subheader("🏆 Model Leaderboard")
+
+    perf_df["Composite Score"] = (
+        perf_df["Accuracy"] +
+        perf_df["F1 Score"] +
+        perf_df["AUC"] +
+        perf_df["MCC"]
+    ) / 4
+
+    perf_df = perf_df.sort_values("Composite Score", ascending=False)
+
+    st.dataframe(perf_df.style.background_gradient(cmap="Blues"))
+
+    # -------------------------------------------------
+    # RADAR CHART
+    # -------------------------------------------------
+    st.subheader("📊 Multi-Metric Radar Comparison")
+
+    fig_radar = go.Figure()
+
+    for _, row in perf_df.iterrows():
+        fig_radar.add_trace(go.Scatterpolar(
+            r=[
+                row["Accuracy"],
+                row["Precision"],
+                row["Recall"],
+                row["F1 Score"],
+                row["AUC"]
+            ],
+            theta=["Accuracy","Precision","Recall","F1","AUC"],
+            fill="toself",
+            name=row["Model"]
+        ))
+
+    fig_radar.update_layout(
+        polar=dict(radialaxis=dict(range=[0,1])),
+        showlegend=True
+    )
+
+    st.plotly_chart(fig_radar, use_container_width=True)
+
+    # -------------------------------------------------
+    # ROC CURVE
+    # -------------------------------------------------
+    st.subheader("ROC Curve Comparison")
+
+    fig_roc = go.Figure()
+
+    for data in roc_data:
+        fig_roc.add_trace(
+            go.Scatter(x=data["fpr"], y=data["tpr"], mode="lines", name=data["name"])
+        )
+
+    fig_roc.add_trace(
+        go.Scatter(x=[0,1], y=[0,1], line=dict(dash="dash"), name="Baseline")
+    )
+
+    st.plotly_chart(fig_roc, use_container_width=True)
+
+    # -------------------------------------------------
+    # CONFUSION MATRICES
+    # -------------------------------------------------
+    st.subheader("Confusion Matrices")
+
+    cm_cols = st.columns(len(comparison_mode))
+
+    for i, name in enumerate(comparison_mode):
+        with cm_cols[i]:
+            fig_cm = px.imshow(
+                cm_data[name],
+                text_auto=True,
+                color_continuous_scale="RdBu_r",
+                labels=dict(x="Predicted", y="Actual")
+            )
+            fig_cm.update_layout(title=name)
+            st.plotly_chart(fig_cm, use_container_width=True)
+
+    # -------------------------------------------------
+    # MODEL & DATA DRIFT DETECTION
+    # -------------------------------------------------
+    st.header("📉 Model & Data Drift Analysis")
+
+    drift_data = []
+
+    for _, row in perf_df.iterrows():
+
+        model_name = row["Model"]
+
+        baseline_f1 = baseline_metrics.get(model_name, {}).get("F1 Score", 0)
+        current_f1 = row["F1 Score"]
+
+        perf_drift = ((current_f1 - baseline_f1) / baseline_f1) * 100 if baseline_f1 else 0
+
+        # Data drift using BMI distribution
+        if "BMI" in train_df.columns and "BMI" in test_df.columns:
+            ks_stat, p_value = ks_2samp(train_df["BMI"], test_df["BMI"])
+        else:
+            p_value = 1.0
+
+        drift_data.append({
+            "Model": model_name,
+            "Baseline F1": baseline_f1,
+            "Current F1": current_f1,
+            "Drift %": perf_drift,
+            "Data Drift P-Value": p_value,
+            "Status": "⚠️ Retrain"
+                if perf_drift < -10 or p_value < 0.05
+                else "✅ Stable"
+        })
+
+    drift_df = pd.DataFrame(drift_data)
+
+    st.dataframe(drift_df)
+
+    # -------------------------------------------------
+    # DRIFT VISUALIZATION
+    # -------------------------------------------------
+    st.subheader("Performance Decay: Train vs Production")
+
+    fig_drift = go.Figure()
+
+    for _, row in drift_df.iterrows():
+        fig_drift.add_trace(
+            go.Scatter(
+                x=["Train","Production"],
+                y=[row["Baseline F1"], row["Current F1"]],
+                mode="lines+markers",
+                name=row["Model"]
+            )
+        )
+
+    fig_drift.update_layout(
+        yaxis_title="F1 Score",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(fig_drift, use_container_width=True)

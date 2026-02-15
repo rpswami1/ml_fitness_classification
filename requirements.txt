@@ -7,3 +7,4 @@ kaggle
 streamlit
 xgboost
 altair<5
+plotly
