@@ -7,6 +7,14 @@ import os
 # 0. AUTO-INSTALL DEPENDENCIES FROM requirements.txt
 # -------------------------------------------------
 def install_requirements():
+
+    # Upgrade pip first
+    try:
+        print("Upgrading pip...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to upgrade pip. Error: {e}")
+
     requirements_file = "requirements.txt"
     
     if not os.path.exists(requirements_file):
@@ -22,7 +30,7 @@ def install_requirements():
     for req in requirements:
         # Handle version specifiers if present (e.g., pandas>=1.0)
         package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0]
-        
+
         # Mapping for packages where import name differs from install name
         import_name = package_name
         if package_name == "scikit-learn":
@@ -39,11 +47,11 @@ def install_requirements():
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
             print("All missing packages installed successfully.")
-            
+
             if "streamlit" in [pkg.split("==")[0] for pkg in missing_packages]:
                 print("\nStreamlit has been installed. Please run the app again using:\nstreamlit run app.py")
                 sys.exit(0)
-                
+
         except subprocess.CalledProcessError as e:
             print(f"Failed to install packages. Error: {e}")
             sys.exit(1)
@@ -160,7 +168,7 @@ if df is not None:
         st.info("Renamed 'fitness_category' column to 'is_fit'.")
     
     st.write(f"Dataset loaded. Shape: {df.shape}")
-    
+
     st.subheader("Raw Data Preview")
     st.dataframe(df)
 
@@ -169,9 +177,9 @@ if df is not None:
     # -------------------------------------------------
     st.header("2. Initial Data Visualization")
     st.write("Visualizing raw features before any cleaning or engineering.")
-    
-    target_col_raw = 'is_fit' 
-    
+
+    target_col_raw = 'is_fit'
+
     # Check if target column exists
     if target_col_raw not in df.columns:
         st.error(f"Target column '{target_col_raw}' not found in dataset. Available columns: {df.columns.tolist()}")
@@ -180,7 +188,7 @@ if df is not None:
         if likely_targets:
             st.info(f"Did you mean one of these? {likely_targets}")
             target_col_raw = st.selectbox("Select Target Column", likely_targets)
-    
+
     # Select numeric columns for visualization (attempting to parse numeric even if object for viz)
     # We create a temporary copy for visualization to not affect the main df yet
     df_viz = df.copy()
@@ -190,7 +198,7 @@ if df is not None:
     potential_numeric_cols = [c for c in df_viz.columns if any(k in c.lower() for k in numeric_keywords)]
     for col in potential_numeric_cols:
         df_viz[col] = pd.to_numeric(df_viz[col], errors='coerce')
-        
+
     numeric_cols_viz = df_viz.select_dtypes(include=[np.number]).columns.tolist()
     categorical_cols_viz = df_viz.select_dtypes(include=['object', 'category']).columns.tolist()
     
@@ -200,7 +208,7 @@ if df is not None:
     
     if selected_feature:
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.write(f"**Distribution of {selected_feature}**")
             fig_hist, ax_hist = plt.subplots()
@@ -209,7 +217,7 @@ if df is not None:
             else:
                 sns.countplot(y=df_viz[selected_feature], ax=ax_hist, palette="viridis")
             st.pyplot(fig_hist)
-            
+
         with col2:
             if target_col_raw in df_viz.columns:
                 st.write(f"**{selected_feature} vs Target ({target_col_raw})**")
@@ -222,7 +230,7 @@ if df is not None:
 
     # 2.2 Feature Comparisons (Bar Charts & Heatmaps)
     st.subheader("2.2 Feature Comparisons & Relationships")
-    
+
     # Correlation Heatmap (Numerical)
     st.write("**Correlation Heatmap (Numerical Features)**")
     if len(numeric_cols_viz) > 1:
@@ -233,15 +241,15 @@ if df is not None:
     # Bar Charts for All Features vs Target
     if target_col_raw in df_viz.columns:
         st.write("**All Features vs Target (Bar Charts)**")
-        
+
         # Get all features excluding target
         all_features = [c for c in df_viz.columns if c != target_col_raw]
-        
+
         if all_features:
             # Create a grid layout
             cols_per_row = 2
             rows = (len(all_features) + cols_per_row - 1) // cols_per_row
-            
+
             for i in range(rows):
                 cols = st.columns(cols_per_row)
                 for j in range(cols_per_row):
@@ -265,7 +273,7 @@ if df is not None:
     # 3. DATA PREPROCESSING & CLEANING
     # -------------------------------------------------
     st.header("3. Preprocessing & Cleaning")
-    
+
     st.subheader("3.1 Handling Specific Data Quality Issues")
     
     # 1. Handle Mixed Data Types in 'smokes'
@@ -280,7 +288,7 @@ if df is not None:
         if df['smokes'].isnull().any():
              df['smokes'] = df['smokes'].fillna(df['smokes'].mode()[0])
         st.write("✅ 'smokes' column standardized to binary (0/1).")
-        
+
     # 2. Handle Missing Values in 'sleep_hours'
     if 'sleep_hours' in df.columns:
         missing_sleep = df['sleep_hours'].isnull().sum()
@@ -288,7 +296,7 @@ if df is not None:
             st.write(f"Imputing {missing_sleep} missing values in 'sleep_hours'...")
             df['sleep_hours'] = df['sleep_hours'].fillna(df['sleep_hours'].median())
             st.write("✅ 'sleep_hours' imputed with median.")
-            
+
     # 3. Outlier Detection in 'weight_kg'
     # Check for weight_kg or weight
     weight_col = 'weight_kg' if 'weight_kg' in df.columns else ('weight' if 'weight' in df.columns else None)
@@ -297,13 +305,13 @@ if df is not None:
         st.write(f"Handling outliers in '{weight_col}' (IQR Method)...")
         # Ensure numeric
         df[weight_col] = pd.to_numeric(df[weight_col], errors='coerce')
-        
+
         Q1 = df[weight_col].quantile(0.25)
         Q3 = df[weight_col].quantile(0.75)
         IQR = Q3 - Q1
         lower_bound = Q1 - 1.5 * IQR
         upper_bound = Q3 + 1.5 * IQR
-        
+
         outliers = ((df[weight_col] < lower_bound) | (df[weight_col] > upper_bound)).sum()
         if outliers > 0:
             # Cap/Clip outliers instead of removing to preserve data size if small
@@ -318,14 +326,14 @@ if df is not None:
     # Now we apply changes to the main 'df'
     for col in potential_numeric_cols:
         # Skip columns we already handled specifically if needed, but safe to re-run
-        if col != 'smokes': 
+        if col != 'smokes':
             df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # 3.2 Handling Missing Values (General)
     if df.isnull().values.any():
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
-        
+
         object_cols = df.select_dtypes(include=['object']).columns
         for col in object_cols:
             if not df[col].mode().empty:
