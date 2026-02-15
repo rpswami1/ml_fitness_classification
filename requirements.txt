@@ -8,3 +8,4 @@ streamlit
 xgboost
 altair<5
 plotly
+imghdr
