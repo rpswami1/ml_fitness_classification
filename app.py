@@ -128,19 +128,44 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading uploaded file: {e}")
 else:
-    # Check if the CSV already exists directly in the folder (from previous manual download or extraction)
     csv_file = os.path.join(CODE_DIR, "fitness_class_data.csv")
-    # Also check for the file provided by the user: fitness_dataset.csv
     user_provided_csv = os.path.join(CODE_DIR, "fitness_dataset.csv")
 
+    # -------------------------------------------------
+    # FUNCTION: Ensure ID column exists in physical CSV
+    # -------------------------------------------------
+    def ensure_id_column(file_path):
+        if os.path.exists(file_path):
+            temp_df = pd.read_csv(file_path)
+            temp_df.columns = temp_df.columns.str.strip()
+
+            if "id" not in temp_df.columns:
+                temp_df.insert(0, "id", range(1, len(temp_df) + 1))
+                temp_df.to_csv(file_path, index=False)
+
+            return temp_df
+        return None
+
+    # -------------------------------------------------
+    # CASE 1: Local user dataset exists
+    # -------------------------------------------------
     if os.path.exists(user_provided_csv):
-        csv_file = user_provided_csv
-        st.success(f"Found local dataset: {os.path.basename(csv_file)}")
-        df = pd.read_csv(csv_file)
+
+        df = ensure_id_column(user_provided_csv)
+        st.success(f"Found local dataset: {os.path.basename(user_provided_csv)}")
+
+    # -------------------------------------------------
+    # CASE 2: Default CSV already exists
+    # -------------------------------------------------
     elif os.path.exists(csv_file):
-        df = pd.read_csv(csv_file)
+
+        df = ensure_id_column(csv_file)
+
+    # -------------------------------------------------
+    # CASE 3: Need to download from Kaggle
+    # -------------------------------------------------
     else:
-        # Only try to download if neither file exists
+
         if not os.path.exists(MAIN_ZIP_PATH):
             st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
             try:
@@ -151,14 +176,16 @@ else:
                 st.success("Download successful.")
             except Exception as e:
                 st.error(f"Error downloading dataset: {e}")
-                st.info("Please ensure you have the Kaggle API installed and configured (kaggle.json).")
+                st.info("Please ensure Kaggle API is configured.")
 
+        # Extract ZIP
         if os.path.exists(MAIN_ZIP_PATH):
             with zipfile.ZipFile(MAIN_ZIP_PATH, "r") as zip_ref:
                 zip_ref.extractall(CODE_DIR)
-        
+
+        # After extraction update CSV with ID
         if os.path.exists(csv_file):
-            df = pd.read_csv(csv_file)
+            df = ensure_id_column(csv_file)
 
 if df is not None:
     # Clean column names to avoid whitespace issues
