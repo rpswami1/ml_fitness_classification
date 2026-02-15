@@ -9,13 +9,6 @@ import io
 # -------------------------------------------------
 def install_requirements():
 
-    # Upgrade pip first
-    try:
-        print("Upgrading pip...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-    except subprocess.CalledProcessError as e:
-        print(f"pip upgrade not needed.")
-
     requirements_file = "requirements.txt"
     
     if not os.path.exists(requirements_file):
