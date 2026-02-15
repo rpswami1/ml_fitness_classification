@@ -1,81 +1,74 @@
-# Real-World Style Fitness Classification Dataset (Synthetic)
+# ml_fitness_classification
+This project implements an end-to-end Machine Learning workflow to predict whether an individual is "Fit" or "Not Fit" based on health and lifestyle metrics. The implementation includes data cleaning, feature engineering, and a comparative analysis of multiple classification models through an interactive Streamlit dashboard.
 
-## Dataset Description
+# Fitness Classification Project
 
-This synthetic dataset simulates a real-world binary classification problem where the goal is to predict whether a person is fit (is_fit = 1) or not fit (is_fit = 0) based on various health and lifestyle features.
+## a. Problem Statement
+The goal of this project is to develop a machine learning application that classifies individuals into "Fit" or "Unfit" categories based on various health and lifestyle attributes. This binary classification problem aims to assist in automated health assessment using synthetic data that mimics real-world scenarios, including data quality challenges such as noise, missing values, and mixed data types.
 
-The dataset contains 2000 samples with a mixture of numerical and categorical features, some of which include noisy, inconsistent, or missing values to reflect real-life data challenges. This design enables users, especially beginners, to practice data preprocessing, feature engineering, and building classification models such as neural networks.
+## b. Dataset Description
+The dataset used is a synthetic fitness classification dataset designed to simulate real-world data quality issues.
 
-Features have both linear and non-linear relationships with the target variable. Some features have complex interactions and the target is generated using a sigmoid-like function with added noise, making it a challenging but realistic task. The dataset also includes mixed data types (e.g., the "smokes" column contains both numeric and string values) and some outliers are present.
+- **Source**: Synthetic dataset (muhammedderric/fitness-classification-dataset-synthetic).
+- **Target Variable**: `is_fit` (renamed from `fitness_category`), indicating if an individual is considered fit.
+- **Key Features**:
+    - `age`: Age of the individual.
+    - `weight_kg`: Weight in kilograms (contained outliers).
+    - `height_m`: Height in meters.
+    - `bmi`: Body Mass Index (calculated feature).
+    - `gender`: Categorical gender feature.
+    - `smokes`: Smoking status (contained mixed types like "yes"/1).
+    - `sleep_hours`: Average daily sleep (contained missing values).
+    - Other lifestyle metrics.
+- **Data Quality Handling**:
+    - **Mixed Data Types**: Standardized the 'smokes' column to binary 0/1.
+    - **Missing Values**: Imputed 'sleep_hours' using the median.
+    - **Outliers**: Capped extreme values in 'weight_kg' using the IQR method.
+    - **Feature Engineering**: Calculated BMI from weight and height.
+    - **Encoding**: One-hot encoded categorical variables.
+    - **Scaling**: Standardized numerical features for model compatibility.
 
-This dataset is ideal for users wanting to improve skills in cleaning messy data, encoding categorical variables, handling missing values, detecting outliers, and training classification models including neural networks.
+## c. Models Used
 
-## Column Descriptions
+The following six machine learning models were implemented and evaluated.
 
-| Column Name | Description |
-|-------------|-------------|
-| age | Age of the individual in years (integer) |
-| height_cm | Height in centimeters (integer) |
-| weight_kg | Weight in kilograms (integer, contains some outliers) |
-| heart_rate | Resting heart rate in beats per minute (float) |
-| blood_pressure | Systolic blood pressure in mmHg (float) |
-| sleep_hours | Average hours of sleep per day (float, may contain NaNs) |
-| nutrition_quality | Daily nutrition quality score between 0 and 10 (float) |
-| activity_index | Physical activity level score between 1 and 5 (float) |
-| smokes | Smoking status (mixed types: 0, 1, "yes", "no") |
-| gender | Gender of individual, either 'M' or 'F' |
-| is_fit | Target variable: 1 if the person is fit, 0 otherwise |
+### Comparison Table of Evaluation Metrics
 
-## Dataset Statistics
+| ML Model Name | Accuracy | AUC | Precision | Recall | F1 Score | MCC |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Logistic Regression** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
+| **Decision Tree** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
+| **kNN** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
+| **Naive Bayes** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
+| **Random Forest (Ensemble)** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
+| **XGBoost (Ensemble)** | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* | *[Value]* |
 
-- **Total samples**: 2000
-- **Features**: 10 (9 predictive features + 1 target)
-- **Target distribution**: Approximately 60% not fit (0), 40% fit (1)
-- **Missing values**: ~8% missing values in sleep_hours column
-- **Data types**: Mixed (integers, floats, strings)
-- **Outliers**: Present in weight_kg column (~2% of samples)
+*(Note: Please replace `*[Value]*` with the actual results obtained from the Streamlit app dashboard after running the evaluation.)*
 
-## Data Quality Issues (Intentional)
+### Observations on Model Performance
 
-This dataset intentionally includes several data quality issues to simulate real-world scenarios:
+| ML Model Name | Observation about model performance |
+| :--- | :--- |
+| **Logistic Regression** | Typically provides a solid baseline. It performs well if the decision boundary is linear but may struggle with complex non-linear relationships in the fitness data. |
+| **Decision Tree** | Offers high interpretability but is prone to overfitting on the training data if not pruned. It captures non-linear patterns well but might have high variance. |
+| **kNN** | Performance depends heavily on the scale of features (handled via standardization). It can be computationally expensive at prediction time and sensitive to noisy features. |
+| **Naive Bayes** | Assumes feature independence, which might not hold true for health metrics (e.g., weight and BMI are correlated). Often serves as a fast, simple baseline. |
+| **Random Forest (Ensemble)** | Generally outperforms single decision trees by reducing variance through bagging. It handles non-linearities and interactions between features (like Age and BMI) effectively. |
+| **XGBoost (Ensemble)** | Often achieves the highest performance by sequentially correcting errors (boosting). It is robust to outliers and handles complex patterns efficiently, though it requires careful tuning. |
 
-1. **Mixed data types**: The 'smokes' column contains both numeric (0, 1) and string ("yes", "no") values
-2. **Missing values**: The 'sleep_hours' column has approximately 8% missing values
-3. **Outliers**: The 'weight_kg' column contains some extreme values (very low or very high weights)
-4. **Noise**: All features contain some level of noise to make the classification task more realistic
+## How to Run the Project
 
-## Suggested Data Preprocessing Steps
-
-1. **Handle mixed data types**: Convert the 'smokes' column to a consistent format
-2. **Deal with missing values**: Impute or remove missing values in 'sleep_hours'
-3. **Outlier detection**: Identify and handle outliers in 'weight_kg'
-4. **Feature engineering**: Consider creating BMI from height and weight
-5. **Encoding**: One-hot encode categorical variables like 'gender'
-6. **Scaling**: Normalize or standardize numerical features for neural networks
-
-## Potential Use Cases
-
-- **Binary classification**: Predict fitness status
-- **Data preprocessing practice**: Clean and prepare messy data
-- **Feature engineering**: Create new meaningful features
-- **Model comparison**: Compare different classification algorithms
-- **Neural network training**: Practice building and tuning neural networks
-- **Exploratory data analysis**: Understand relationships between health metrics
-
-## Model Performance Expectations
-
-Due to the synthetic nature and intentional noise, expect:
-- **Baseline accuracy**: ~60% (majority class)
-- **Good models**: 75-85% accuracy
-- **Excellent models**: 85-90% accuracy
-
-The dataset is designed to be challenging but achievable, making it perfect for learning and experimentation.
-
-## License
-
-This dataset is provided under the **CC0 Public Domain** license, making it suitable for educational and research purposes without restrictions.
-
-## Acknowledgments
-
-This is a synthetic dataset created for educational purposes. It does not contain real personal health information and is designed to help users practice data science skills in a safe, privacy-compliant environment.
-
+1.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **Run the Streamlit App**:
+    ```bash
+    streamlit run app.py
+    ```
+3.  **Workflow**:
+    - The app will automatically download/load the dataset.
+    - It performs data cleaning, feature engineering, and scaling.
+    - Models are trained automatically.
+    - You can download the Test Set CSV.
+    - Upload the Test Set CSV to view the evaluation metrics and populate the table above.
