@@ -107,7 +107,7 @@ MAIN_ZIP_PATH = os.path.join(CODE_DIR, MAIN_ZIP)
 st.header("1. Dataset Setup")
 
 # Option to upload dataset
-uploaded_file = st.file_uploader("Upload your Fitness Dataset (CSV)", type=["csv"])
+uploaded_file = st.file_uploader("Upload your Fitness Dataset (CSV) for training the models (Default it will download this file if not provided manually)", type=["csv"])
 
 df = None
 
@@ -524,9 +524,9 @@ st.dataframe(
 )
 
 # -------------------------------------------------
-# 7. PRODUCTION TESTING & ANALYTICS DASHBOARD
+# 7. TESTING & ANALYTICS DASHBOARD
 # -------------------------------------------------
-st.header("7. Production Testing & Analytics Dashboard")
+st.header("7. Testing & Analytics Dashboard")
 
 if not st.session_state.trained_models:
     st.warning("No trained models found.")
@@ -548,7 +548,7 @@ st.download_button("📥 Download Test CSV Template",
 
 # Model selection
 selected_models = st.multiselect(
-    "Select models to evaluate",
+    "Select models to evaluate:",
     list(st.session_state.trained_models.keys()),
     default=list(st.session_state.trained_models.keys())
 )
