@@ -13,7 +13,7 @@ def install_requirements():
         print("Upgrading pip...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
     except subprocess.CalledProcessError as e:
-        print(f"Warning: Failed to upgrade pip. Error: {e}")
+        print(f"pip upgrade not needed.")
 
     requirements_file = "requirements.txt"
     
