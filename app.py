@@ -2,6 +2,7 @@ import sys
 import subprocess
 import importlib.util
 import os
+import io
 
 # -------------------------------------------------
 # 0. AUTO-INSTALL DEPENDENCIES FROM requirements.txt
@@ -20,10 +21,7 @@ def install_requirements():
 
     missing_packages = []
     for req in requirements:
-        # Handle version specifiers if present (e.g., pandas>=1.0)
         package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0]
-        
-        # Mapping for packages where import name differs from install name
         import_name = package_name
         if package_name == "scikit-learn":
             import_name = "sklearn"
@@ -39,11 +37,9 @@ def install_requirements():
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
             print("All missing packages installed successfully.")
-            
             if "streamlit" in [pkg.split("==")[0] for pkg in missing_packages]:
                 print("\nStreamlit has been installed. Please run the app again using:\nstreamlit run app.py")
                 sys.exit(0)
-                
         except subprocess.CalledProcessError as e:
             print(f"Failed to install packages. Error: {e}")
             sys.exit(1)
@@ -70,7 +66,6 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 
 # Import models from the 'model' directory
-# Ensure the directory is in the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
 
 try:
@@ -83,6 +78,118 @@ try:
 except ImportError as e:
     st.error(f"Error importing model modules: {e}")
     st.stop()
+
+# -------------------------------------------------
+# HELPER FUNCTIONS
+# -------------------------------------------------
+def clean_and_engineer_features(df_in):
+    """
+    Applies cleaning and feature engineering to a dataframe.
+    Returns the modified dataframe.
+    """
+    df_out = df_in.copy()
+    
+    # 1. Standardize 'smokes'
+    if 'smokes' in df_out.columns:
+        df_out['smokes'] = df_out['smokes'].astype(str).str.lower().str.strip()
+        smokes_map = {'yes': 1, 'no': 0, '1': 1, '0': 0, '1.0': 1, '0.0': 0}
+        df_out['smokes'] = df_out['smokes'].map(smokes_map)
+        if df_out['smokes'].isnull().any():
+             df_out['smokes'] = df_out['smokes'].fillna(df_out['smokes'].mode()[0])
+
+    # 2. Impute 'sleep_hours'
+    if 'sleep_hours' in df_out.columns:
+        df_out['sleep_hours'] = df_out['sleep_hours'].fillna(df_out['sleep_hours'].median())
+
+    # 3. Handle Outliers in 'weight_kg' (Capping)
+    weight_col = 'weight_kg' if 'weight_kg' in df_out.columns else ('weight' if 'weight' in df_out.columns else None)
+    if weight_col:
+        df_out[weight_col] = pd.to_numeric(df_out[weight_col], errors='coerce')
+        Q1 = df_out[weight_col].quantile(0.25)
+        Q3 = df_out[weight_col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        df_out[weight_col] = np.clip(df_out[weight_col], lower_bound, upper_bound)
+
+    # 4. General Numeric Cleaning
+    numeric_keywords = ['weight', 'height', 'age', 'bmi', 'score', 'income', 'rate', 'duration']
+    potential_numeric_cols = [c for c in df_out.columns if any(k in c.lower() for k in numeric_keywords)]
+    for col in potential_numeric_cols:
+        if col != 'smokes':
+            df_out[col] = pd.to_numeric(df_out[col], errors='coerce')
+
+    # 5. General Imputation
+    numeric_cols = df_out.select_dtypes(include=[np.number]).columns
+    df_out[numeric_cols] = df_out[numeric_cols].fillna(df_out[numeric_cols].median())
+    
+    object_cols = df_out.select_dtypes(include=['object']).columns
+    for col in object_cols:
+        if not df_out[col].mode().empty:
+            df_out[col] = df_out[col].fillna(df_out[col].mode()[0])
+
+    # 6. Feature Engineering: BMI
+    w_col = 'weight_kg' if 'weight_kg' in df_out.columns else ('weight' if 'weight' in df_out.columns else None)
+    h_col = 'height_m' if 'height_m' in df_out.columns else ('height' if 'height' in df_out.columns else None)
+
+    if w_col and h_col:
+        height_mean = df_out[h_col].mean()
+        if height_mean > 3: # Assume cm
+            df_out['BMI'] = df_out[w_col] / ((df_out[h_col] / 100) ** 2)
+        else: # Assume m
+            df_out['BMI'] = df_out[w_col] / (df_out[h_col] ** 2)
+            
+    return df_out
+
+def prepare_data_for_model(df_in, target_col, train_columns=None, scaler=None):
+    """
+    Encodes, aligns columns, and scales data.
+    If train_columns and scaler are provided, it aligns/scales to match training data.
+    Otherwise, it prepares training data and returns columns/scaler.
+    """
+    df_proc = df_in.copy()
+    
+    # Label Encode Target
+    if target_col in df_proc.columns:
+        le = LabelEncoder()
+        df_proc[target_col] = le.fit_transform(df_proc[target_col])
+    
+    # One-Hot Encoding
+    categorical_cols = df_proc.select_dtypes(include=['object', 'category']).columns.tolist()
+    if target_col in categorical_cols:
+        categorical_cols.remove(target_col)
+        
+    df_proc = pd.get_dummies(df_proc, columns=categorical_cols, drop_first=True)
+    
+    # Separate X and y
+    if target_col in df_proc.columns:
+        X = df_proc.drop(columns=[target_col])
+        y = df_proc[target_col]
+    else:
+        X = df_proc
+        y = None
+
+    # Align Columns
+    if train_columns is not None:
+        # Add missing columns with 0
+        for col in train_columns:
+            if col not in X.columns:
+                X[col] = 0
+        # Drop extra columns
+        X = X[train_columns]
+        # Ensure order
+        X = X[train_columns]
+    else:
+        train_columns = X.columns.tolist()
+
+    # Scaling
+    if scaler is None:
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+    else:
+        X_scaled = scaler.transform(X)
+        
+    return X_scaled, y, train_columns, scaler
 
 # -------------------------------------------------
 # APP CONFIG
@@ -118,9 +225,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading uploaded file: {e}")
 else:
-    # Check if the CSV already exists directly in the folder (from previous manual download or extraction)
     csv_file = os.path.join(CODE_DIR, "fitness_class_data.csv")
-    # Also check for the file provided by the user: fitness_dataset.csv
     user_provided_csv = os.path.join(CODE_DIR, "fitness_dataset.csv")
 
     if os.path.exists(user_provided_csv):
@@ -130,7 +235,6 @@ else:
     elif os.path.exists(csv_file):
         df = pd.read_csv(csv_file)
     else:
-        # Only try to download if neither file exists
         if not os.path.exists(MAIN_ZIP_PATH):
             st.write(f"Downloading Kaggle ZIP into: {CODE_DIR}")
             try:
@@ -151,97 +255,69 @@ else:
             df = pd.read_csv(csv_file)
 
 if df is not None:
-    # Clean column names to avoid whitespace issues
+    # Clean column names
     df.columns = df.columns.str.strip()
     
-    # Rename fitness_category to is_fit if present
+    # Rename target if needed
     if 'fitness_category' in df.columns and 'is_fit' not in df.columns:
         df.rename(columns={'fitness_category': 'is_fit'}, inplace=True)
         st.info("Renamed 'fitness_category' column to 'is_fit'.")
     
     st.write(f"Dataset loaded. Shape: {df.shape}")
-    
     st.subheader("Raw Data Preview")
     st.dataframe(df)
 
-    # -------------------------------------------------
-    # 2. INITIAL DATA VISUALIZATION (Before Preprocessing)
-    # -------------------------------------------------
-    st.header("2. Initial Data Visualization")
-    st.write("Visualizing raw features before any cleaning or engineering.")
-    
-    target_col_raw = 'is_fit' 
-    
-    # Check if target column exists
+    target_col_raw = 'is_fit'
     if target_col_raw not in df.columns:
-        st.error(f"Target column '{target_col_raw}' not found in dataset. Available columns: {df.columns.tolist()}")
-        # Try to find a likely candidate
+        st.error(f"Target column '{target_col_raw}' not found.")
         likely_targets = [c for c in df.columns if 'fitness' in c.lower() or 'category' in c.lower() or 'class' in c.lower()]
         if likely_targets:
-            st.info(f"Did you mean one of these? {likely_targets}")
             target_col_raw = st.selectbox("Select Target Column", likely_targets)
+
+    # -------------------------------------------------
+    # 2. VISUALIZATION
+    # -------------------------------------------------
+    st.header("2. Initial Data Visualization")
     
-    # Select numeric columns for visualization (attempting to parse numeric even if object for viz)
-    # We create a temporary copy for visualization to not affect the main df yet
-    df_viz = df.copy()
+    numeric_cols_viz = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols_viz = df.select_dtypes(include=['object', 'category']).columns.tolist()
     
-    # Try to convert potential numeric columns just for visualization purposes
-    numeric_keywords = ['weight', 'height', 'age', 'bmi', 'score', 'income', 'rate', 'duration']
-    potential_numeric_cols = [c for c in df_viz.columns if any(k in c.lower() for k in numeric_keywords)]
-    for col in potential_numeric_cols:
-        df_viz[col] = pd.to_numeric(df_viz[col], errors='coerce')
-        
-    numeric_cols_viz = df_viz.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols_viz = df_viz.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    # 2.1 Single Feature Visualization
     st.subheader("2.1 Single Feature Distribution")
     selected_feature = st.selectbox("Select Feature to Visualize", numeric_cols_viz + categorical_cols_viz)
     
     if selected_feature:
         col1, col2 = st.columns(2)
-        
         with col1:
             st.write(f"**Distribution of {selected_feature}**")
             fig_hist, ax_hist = plt.subplots()
             if selected_feature in numeric_cols_viz:
-                sns.histplot(df_viz[selected_feature].dropna(), kde=True, ax=ax_hist)
+                sns.histplot(df[selected_feature].dropna(), kde=True, ax=ax_hist)
             else:
-                sns.countplot(y=df_viz[selected_feature], ax=ax_hist, palette="viridis")
+                sns.countplot(y=df[selected_feature], ax=ax_hist, palette="viridis")
             st.pyplot(fig_hist)
-            
         with col2:
-            if target_col_raw in df_viz.columns:
-                st.write(f"**{selected_feature} vs Target ({target_col_raw})**")
+            if target_col_raw in df.columns:
+                st.write(f"**{selected_feature} vs Target**")
                 fig_box, ax_box = plt.subplots()
                 if selected_feature in numeric_cols_viz:
-                    sns.boxplot(x=target_col_raw, y=selected_feature, data=df_viz, ax=ax_box)
+                    sns.boxplot(x=target_col_raw, y=selected_feature, data=df, ax=ax_box)
                 else:
-                    sns.countplot(x=selected_feature, hue=target_col_raw, data=df_viz, ax=ax_box)
+                    sns.countplot(x=selected_feature, hue=target_col_raw, data=df, ax=ax_box)
                 st.pyplot(fig_box)
 
-    # 2.2 Feature Comparisons (Bar Charts & Heatmaps)
-    st.subheader("2.2 Feature Comparisons & Relationships")
-    
-    # Correlation Heatmap (Numerical)
-    st.write("**Correlation Heatmap (Numerical Features)**")
+    st.subheader("2.2 Feature Comparisons")
     if len(numeric_cols_viz) > 1:
+        st.write("**Correlation Heatmap**")
         fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
-        sns.heatmap(df_viz[numeric_cols_viz].corr(), annot=True, fmt=".2f", cmap='coolwarm', ax=ax_corr)
+        sns.heatmap(df[numeric_cols_viz].corr(), annot=True, fmt=".2f", cmap='coolwarm', ax=ax_corr)
         st.pyplot(fig_corr)
     
-    # Bar Charts for All Features vs Target
-    if target_col_raw in df_viz.columns:
-        st.write("**All Features vs Target (Bar Charts)**")
-        
-        # Get all features excluding target
-        all_features = [c for c in df_viz.columns if c != target_col_raw]
-        
+    if target_col_raw in df.columns:
+        st.write("**All Features vs Target**")
+        all_features = [c for c in df.columns if c != target_col_raw]
         if all_features:
-            # Create a grid layout
             cols_per_row = 2
             rows = (len(all_features) + cols_per_row - 1) // cols_per_row
-            
             for i in range(rows):
                 cols = st.columns(cols_per_row)
                 for j in range(cols_per_row):
@@ -251,523 +327,184 @@ if df is not None:
                         with cols[j]:
                             fig, ax = plt.subplots()
                             if col_name in numeric_cols_viz:
-                                # Bar chart of mean value vs target
-                                sns.barplot(x=target_col_raw, y=col_name, data=df_viz, ax=ax, palette="viridis")
+                                sns.barplot(x=target_col_raw, y=col_name, data=df, ax=ax, palette="viridis")
                                 plt.title(f"Mean {col_name} by Target")
                             else:
-                                # Count plot for categorical
-                                sns.countplot(x=col_name, hue=target_col_raw, data=df_viz, ax=ax, palette="Set2")
-                                plt.title(f"{col_name} Distribution by Target")
+                                sns.countplot(x=col_name, hue=target_col_raw, data=df, ax=ax, palette="Set2")
+                                plt.title(f"{col_name} by Target")
                                 plt.xticks(rotation=45)
                             st.pyplot(fig)
 
     # -------------------------------------------------
-    # 3. DATA PREPROCESSING & CLEANING
+    # 3. DATA SPLIT (RAW) & DOWNLOAD
     # -------------------------------------------------
-    st.header("3. Preprocessing & Cleaning")
+    st.header("3. Data Split & Test Set Download")
     
-    st.subheader("3.1 Handling Specific Data Quality Issues")
+    # Split Raw Data first to allow downloading raw test set
+    train_df_raw, test_df_raw = train_test_split(df, test_size=0.2, random_state=42)
     
-    # 1. Handle Mixed Data Types in 'smokes'
-    if 'smokes' in df.columns:
-        st.write("Standardizing 'smokes' column (mixed types detected)...")
-        # Convert to string first to handle mixed types, then map
-        df['smokes'] = df['smokes'].astype(str).str.lower().str.strip()
-        # Map yes/no/1/0
-        smokes_map = {'yes': 1, 'no': 0, '1': 1, '0': 0, '1.0': 1, '0.0': 0}
-        df['smokes'] = df['smokes'].map(smokes_map)
-        # Fill any NaNs (unexpected values) with mode
-        if df['smokes'].isnull().any():
-             df['smokes'] = df['smokes'].fillna(df['smokes'].mode()[0])
-        st.write("✅ 'smokes' column standardized to binary (0/1).")
-        
-    # 2. Handle Missing Values in 'sleep_hours'
-    if 'sleep_hours' in df.columns:
-        missing_sleep = df['sleep_hours'].isnull().sum()
-        if missing_sleep > 0:
-            st.write(f"Imputing {missing_sleep} missing values in 'sleep_hours'...")
-            df['sleep_hours'] = df['sleep_hours'].fillna(df['sleep_hours'].median())
-            st.write("✅ 'sleep_hours' imputed with median.")
-            
-    # 3. Outlier Detection in 'weight_kg'
-    # Check for weight_kg or weight
-    weight_col = 'weight_kg' if 'weight_kg' in df.columns else ('weight' if 'weight' in df.columns else None)
+    st.write(f"Data split into Training ({train_df_raw.shape[0]} samples) and Test ({test_df_raw.shape[0]} samples) sets.")
     
-    if weight_col:
-        st.write(f"Handling outliers in '{weight_col}' (IQR Method)...")
-        # Ensure numeric
-        df[weight_col] = pd.to_numeric(df[weight_col], errors='coerce')
-        
-        Q1 = df[weight_col].quantile(0.25)
-        Q3 = df[weight_col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        
-        outliers = ((df[weight_col] < lower_bound) | (df[weight_col] > upper_bound)).sum()
-        if outliers > 0:
-            # Cap/Clip outliers instead of removing to preserve data size if small
-            df[weight_col] = np.clip(df[weight_col], lower_bound, upper_bound)
-            st.write(f"✅ Capped {outliers} outliers in '{weight_col}' to IQR bounds.")
-        else:
-            st.write(f"No outliers detected in '{weight_col}'.")
-
-    st.subheader("3.2 General Cleaning")
+    # Convert Test Set to CSV for download
+    csv_buffer = io.StringIO()
+    test_df_raw.to_csv(csv_buffer, index=False)
+    csv_data = csv_buffer.getvalue()
     
-    # 3.1 Handling Corrupted Data (General)
-    # Now we apply changes to the main 'df'
-    for col in potential_numeric_cols:
-        # Skip columns we already handled specifically if needed, but safe to re-run
-        if col != 'smokes': 
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # 3.2 Handling Missing Values (General)
-    if df.isnull().values.any():
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
-        
-        object_cols = df.select_dtypes(include=['object']).columns
-        for col in object_cols:
-            if not df[col].mode().empty:
-                df[col] = df[col].fillna(df[col].mode()[0])
-        st.success("Imputed remaining missing values.")
-
-    # -------------------------------------------------
-    # 4. FEATURE ENGINEERING
-    # -------------------------------------------------
-    st.header("4. Feature Engineering")
-    
-    # 4.1 BMI Calculation
-    # Check for weight_kg/weight and height/height_m
-    w_col = 'weight_kg' if 'weight_kg' in df.columns else ('weight' if 'weight' in df.columns else None)
-    h_col = 'height_m' if 'height_m' in df.columns else ('height' if 'height' in df.columns else None)
-
-    if w_col and h_col:
-        # Check if height is likely in cm (> 3) or m (< 3)
-        height_mean = df[h_col].mean()
-        if height_mean > 3:
-            # Assume cm, convert to m
-            df['BMI'] = df[w_col] / ((df[h_col] / 100) ** 2)
-        else:
-            # Assume m
-            df['BMI'] = df[w_col] / (df[h_col] ** 2)
-        st.write(f"✅ Created feature: `BMI` from `{w_col}` and `{h_col}`")
-
-    # 4.2 One-Hot Encoding
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    target_col = target_col_raw # Use the identified target column
-    
-    if target_col in categorical_cols:
-        categorical_cols.remove(target_col)
-        if "label_encoder" not in st.session_state:
-            le = LabelEncoder()
-            df[target_col] = le.fit_transform(df[target_col])
-            st.session_state.label_encoder = le
-        else:
-            le = st.session_state.label_encoder
-        df[target_col] = le.fit_transform(df[target_col])
-        st.write(f"✅ Label Encoded target: `{target_col}`")
-
-    df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
-    st.write("✅ Performed One-Hot Encoding.")
-
-    # -------------------------------------------------
-    # 5. FEATURE SELECTION
-    # -------------------------------------------------
-    st.header("5. Feature Selection")
-    
-    st.subheader("Correlation Heatmap")
-    fig_corr = plt.figure(figsize=(12, 10))
-    correlation_matrix = df.corr()
-    sns.heatmap(correlation_matrix, annot=False, cmap='coolwarm')
-    st.pyplot(fig_corr)
-
-    # Automatic Feature Selection based on Correlation Threshold
-    threshold = 0.1
-    st.write(f"Applying Correlation Threshold: {threshold}")
-    
-    # Check if target_col is still in correlation_matrix
-    if target_col in correlation_matrix.columns:
-        target_corr = correlation_matrix[target_col].abs()
-        unnecessary_features = target_corr[target_corr < threshold].index.tolist()
-        
-        # SAFETY CHECK: Ensure target column is NOT dropped
-        # We use list comprehension to be absolutely sure we filter it out
-        unnecessary_features = [f for f in unnecessary_features if f != target_col]
-        
-        if unnecessary_features:
-            st.write(f"Dropping low-impact features (< {threshold} correlation): {unnecessary_features}")
-            df.drop(columns=unnecessary_features, inplace=True)
-            st.success(f"Dropped {len(unnecessary_features)} features.")
-        else:
-            st.info("No features dropped (all meet the correlation threshold).")
-    else:
-        st.warning(f"Target column '{target_col}' not found in correlation matrix. Skipping feature selection based on target correlation.")
-
-    st.write(f"Final Dataset Shape: {df.shape}")
-
-
-# -------------------------------------------------
-# 6. MODEL IMPLEMENTATION & PERSISTENT TRAINING
-# -------------------------------------------------
-st.header("6. Model Implementation & Evaluation")
-
-if "trained_models" not in st.session_state:
-    st.session_state.trained_models = {}
-
-if "baseline_metrics" not in st.session_state:
-    st.session_state.baseline_metrics = {}
-
-if not st.session_state.trained_models:
-
-    st.write("Training models (this runs only once)...")
-
-    X = df.drop(columns=[target_col])
-    y = df[target_col]
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, random_state=42
+    st.download_button(
+        label="📥 Download Test Set (CSV)",
+        data=csv_data,
+        file_name="test_dataset.csv",
+        mime="text/csv"
     )
 
-    # Save scaler & features for later use
-    st.session_state.scaler = scaler
-    st.session_state.feature_columns = X.columns
-    st.session_state.X_train = X_train
-    st.session_state.y_train = y_train
-    st.session_state.df = df
+    # -------------------------------------------------
+    # 4. PREPROCESSING & TRAINING
+    # -------------------------------------------------
+    st.header("4. Preprocessing & Model Training")
+    
+    st.write("Processing Training Data...")
+    
+    # 1. Clean & Engineer Features (Train)
+    train_df_proc = clean_and_engineer_features(train_df_raw)
+    
+    # 2. Feature Selection (Correlation based on Train)
+    # We do this before encoding to keep it simple, or after? 
+    # Let's do it after encoding in prepare_data_for_model or manually here.
+    # For simplicity, we'll stick to the previous logic: Drop low correlation features.
+    # But we need to do it on the encoded data.
+    
+    # Prepare Train Data (Encode, Scale)
+    X_train_scaled, y_train, final_features, scaler = prepare_data_for_model(train_df_proc, target_col_raw)
+    
+    # Feature Selection Logic (re-implemented to be robust)
+    # We need a temporary DF to calculate correlation
+    temp_train_df = pd.DataFrame(X_train_scaled, columns=final_features)
+    if y_train is not None:
+        temp_train_df[target_col_raw] = y_train.values
+        
+    corr_matrix = temp_train_df.corr()
+    threshold = 0.1
+    
+    features_to_drop = []
+    if target_col_raw in corr_matrix.columns:
+        target_corr = corr_matrix[target_col_raw].abs()
+        features_to_drop = target_corr[target_corr < threshold].index.tolist()
+        if target_col_raw in features_to_drop:
+            features_to_drop.remove(target_col_raw)
+    
+    if features_to_drop:
+        st.write(f"Dropping low correlation features: {features_to_drop}")
+        # Update final_features list
+        final_features = [f for f in final_features if f not in features_to_drop]
+        # Update X_train_scaled (need to re-slice, but X_train_scaled is numpy array)
+        # It's easier to re-run prepare_data_for_model with reduced columns? 
+        # Or just slice the array.
+        # Let's slice the array.
+        indices_to_keep = [i for i, col in enumerate(temp_train_df.columns) if col in final_features]
+        X_train_scaled = X_train_scaled[:, indices_to_keep]
+    
+    st.success("Training Data Processed & Scaled.")
 
-    results = []
+    # Train Models
+    st.write("Training Models...")
+    models = {}
+    
+    # Logistic Regression
+    model_lr, _, _ = train_logistic_regression(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["Logistic Regression"] = model_lr
+    
+    # Decision Tree
+    model_dt, _, _ = train_decision_tree(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["Decision Tree"] = model_dt
+    
+    # KNN
+    model_knn, _, _ = train_knn(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["K-Nearest Neighbors"] = model_knn
+    
+    # Naive Bayes
+    model_nb, _, _ = train_naive_bayes(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["Naive Bayes (Gaussian)"] = model_nb
+    
+    # Random Forest
+    model_rf, _, _ = train_random_forest(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["Random Forest"] = model_rf
+    
+    # XGBoost
+    model_xgb, _, _ = train_xgboost(X_train_scaled, X_train_scaled, y_train, y_train)
+    models["XGBoost"] = model_xgb
+    
+    st.success("All Models Trained Successfully.")
 
-    model_functions = {
-        "Logistic Regression": train_logistic_regression,
-        "Decision Tree": train_decision_tree,
-        "K-Nearest Neighbors": train_knn,
-        "Naive Bayes (Gaussian)": train_naive_bayes,
-        "Random Forest": train_random_forest,
-        "XGBoost": train_xgboost
-    }
+    # -------------------------------------------------
+    # 5. EVALUATION (TEST SET)
+    # -------------------------------------------------
+    st.header("5. Evaluation on Test Data")
+    
+    # Option to upload separate test file
+    test_file_upload = st.file_uploader("Upload a separate Test CSV (Optional)", type=["csv"])
+    
+    if test_file_upload is not None:
+        try:
+            df_test_eval = pd.read_csv(test_file_upload)
+            # Clean column names
+            df_test_eval.columns = df_test_eval.columns.str.strip()
+            if 'fitness_category' in df_test_eval.columns and 'is_fit' not in df_test_eval.columns:
+                df_test_eval.rename(columns={'fitness_category': 'is_fit'}, inplace=True)
+            st.info(f"Using uploaded test file: {test_file_upload.name}")
+        except Exception as e:
+            st.error(f"Error reading test file: {e}")
+            df_test_eval = test_df_raw
+    else:
+        st.info("Using the default Test split from the dataset.")
+        df_test_eval = test_df_raw
 
-    for model_name, train_func in model_functions.items():
-
-        model, train_m, test_m = train_func(X_train, X_test, y_train, y_test)
-
-        # Store trained model
-        st.session_state.trained_models[model_name] = model
-
-        # Store baseline (Train metrics)
-        st.session_state.baseline_metrics[model_name] = {
-            "Accuracy": train_m["Accuracy"],
-            "Precision": train_m["Precision"],
-            "Recall": train_m["Recall"],
-            "F1 Score": train_m["F1 Score"],
-            "AUC Score": train_m["AUC Score"],
-            "MCC": train_m["MCC"]
-        }
-
-        test_m["Model"] = model_name
-        test_m["Set"] = "Test"
-        train_m["Model"] = model_name
-        train_m["Set"] = "Train"
-
-        results.append(train_m)
-        results.append(test_m)
-
-    results_df = pd.DataFrame(results)
-
-    st.success("Models trained and stored successfully.")
+    if df_test_eval is not None:
+        # Process Test Data using SAME logic as Train
+        test_df_proc = clean_and_engineer_features(df_test_eval)
+        
+        # Prepare Test Data (Align columns to Train, Scale using Train scaler)
+        X_test_scaled, y_test, _, _ = prepare_data_for_model(
+            test_df_proc, 
+            target_col_raw, 
+            train_columns=final_features, # Use features AFTER selection
+            scaler=scaler
+        )
+        
+        if y_test is None:
+            st.warning("Test dataset does not contain the target column. Cannot calculate evaluation metrics.")
+        else:
+            # Evaluate
+            from model.logistic_regression import calculate_metrics
+            
+            results = []
+            for name, model in models.items():
+                y_pred = model.predict(X_test_scaled)
+                y_proba = model.predict_proba(X_test_scaled) if hasattr(model, "predict_proba") else None
+                
+                metrics = calculate_metrics(y_test, y_pred, y_proba)
+                metrics["Model"] = name
+                results.append(metrics)
+            
+            # Display Results
+            results_df = pd.DataFrame(results)
+            cols = ["Model", "Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
+            results_df = results_df[cols]
+            
+            st.subheader("Evaluation Metrics")
+            st.dataframe(results_df.style.format("{:.4f}"))
+            
+            # Visualizations
+            st.subheader("Model Performance Comparison")
+            metrics_to_plot = ["Accuracy", "AUC Score", "Precision", "Recall", "F1 Score", "MCC"]
+            cols_plot = st.columns(2)
+            
+            for i, metric in enumerate(metrics_to_plot):
+                with cols_plot[i % 2]:
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    sns.barplot(x=metric, y="Model", data=results_df, palette="viridis", ax=ax)
+                    plt.title(f"{metric} Comparison")
+                    plt.xlim(0, 1.0)
+                    st.pyplot(fig)
 
 else:
-    st.success("Models already trained — using persisted models.")
-
-# Display comparison table
-results_display = pd.DataFrame([
-    {
-        "Model": name,
-        **st.session_state.baseline_metrics[name]
-    }
-    for name in st.session_state.trained_models.keys()
-])
-
-st.subheader("Training Baseline Metrics")
-numeric_cols = results_display.select_dtypes(include=["number"]).columns
-
-st.dataframe(
-    results_display.style.format(
-        {col: "{:.4f}" for col in numeric_cols}
-    )
-)
-
-
-# -------------------------------------------------
-# 7. ENTERPRISE ML ANALYTICS & DRIFT DASHBOARD
-# -------------------------------------------------
-st.header("🚀 Enterprise ML Analytics Dashboard")
-
-import plotly.graph_objects as go
-import plotly.express as px
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score,
-    f1_score, roc_auc_score, matthews_corrcoef,
-    confusion_matrix, roc_curve
-)
-from scipy.stats import ks_2samp
-
-# -------------------------------------------------
-# SAFETY CHECK
-# -------------------------------------------------
-if "trained_models" not in st.session_state or not st.session_state.trained_models:
-    st.warning("No trained models found. Please ensure Section 6 runs successfully.")
-    st.stop()
-
-scaler = st.session_state.scaler
-feature_columns = st.session_state.feature_columns
-baseline_metrics = st.session_state.baseline_metrics
-train_df = st.session_state.df
-
-# -------------------------------------------------
-# SIDEBAR CONTROLS
-# -------------------------------------------------
-with st.sidebar:
-    st.subheader("📂 Data Management")
-
-    template = train_df.sample(min(20, len(train_df)))
-    st.download_button(
-        "📥 Download Production Template",
-        template.to_csv(index=False).encode("utf-8"),
-        "production_test_template.csv",
-        "text/csv"
-    )
-
-    st.divider()
-    st.subheader("🤖 Model Selection")
-
-    model_names = list(st.session_state.trained_models.keys())
-
-    comparison_mode = st.multiselect(
-        "Select Models to Compare",
-        options=model_names,
-        default=model_names
-    )
-
-# -------------------------------------------------
-# TEST FILE UPLOAD
-# -------------------------------------------------
-uploaded_test_file = st.file_uploader("Upload Production Test CSV", type=["csv"])
-
-if uploaded_test_file:
-
-    test_df = pd.read_csv(uploaded_test_file)
-    test_df.columns = test_df.columns.str.strip()
-
-    st.success(f"Loaded {len(test_df)} records.")
-
-    # -------------------------------------------------
-    # PREPROCESSING (Same as Training)
-    # -------------------------------------------------
-    if 'fitness_category' in test_df.columns and 'is_fit' not in test_df.columns:
-        test_df.rename(columns={'fitness_category': 'is_fit'}, inplace=True)
-
-    for col in potential_numeric_cols:
-        if col in test_df.columns:
-            test_df[col] = pd.to_numeric(test_df[col], errors='coerce')
-
-    numeric_cols_test = test_df.select_dtypes(include=[np.number]).columns
-    test_df[numeric_cols_test] = test_df[numeric_cols_test].fillna(test_df[numeric_cols_test].median())
-
-    object_cols_test = test_df.select_dtypes(include=['object']).columns
-    for col in object_cols_test:
-        test_df[col] = test_df[col].fillna(test_df[col].mode()[0])
-
-    if w_col and h_col and w_col in test_df.columns and h_col in test_df.columns:
-        height_mean = test_df[h_col].mean()
-        if height_mean > 3:
-            test_df["BMI"] = test_df[w_col] / ((test_df[h_col] / 100) ** 2)
-        else:
-            test_df["BMI"] = test_df[w_col] / (test_df[h_col] ** 2)
-
-    if target_col in test_df.columns:
-        test_df[target_col] = le.transform(test_df[target_col])
-
-    test_df = pd.get_dummies(test_df)
-
-    X_test_custom = test_df.reindex(columns=feature_columns, fill_value=0)
-    X_test_scaled = scaler.transform(X_test_custom)
-
-    y_true = test_df[target_col]
-
-    # -------------------------------------------------
-    # METRICS ENGINE
-    # -------------------------------------------------
-    all_metrics = []
-    roc_data = []
-    cm_data = {}
-
-    for name in comparison_mode:
-
-        model = st.session_state.trained_models[name]
-
-        y_pred = model.predict(X_test_scaled)
-        y_prob = model.predict_proba(X_test_scaled)[:, 1] if hasattr(model, "predict_proba") else y_pred
-
-        metrics = {
-            "Model": name,
-            "Accuracy": accuracy_score(y_true, y_pred),
-            "Precision": precision_score(y_true, y_pred, zero_division=0),
-            "Recall": recall_score(y_true, y_pred, zero_division=0),
-            "F1 Score": f1_score(y_true, y_pred, zero_division=0),
-            "AUC": roc_auc_score(y_true, y_prob),
-            "MCC": matthews_corrcoef(y_true, y_pred)
-        }
-
-        all_metrics.append(metrics)
-
-        fpr, tpr, _ = roc_curve(y_true, y_prob)
-        roc_data.append({"name": name, "fpr": fpr, "tpr": tpr})
-
-        cm_data[name] = confusion_matrix(y_true, y_pred)
-
-    perf_df = pd.DataFrame(all_metrics)
-
-    # -------------------------------------------------
-    # LEADERBOARD
-    # -------------------------------------------------
-    st.subheader("🏆 Model Leaderboard")
-
-    perf_df["Composite Score"] = (
-        perf_df["Accuracy"] +
-        perf_df["F1 Score"] +
-        perf_df["AUC"] +
-        perf_df["MCC"]
-    ) / 4
-
-    perf_df = perf_df.sort_values("Composite Score", ascending=False)
-
-    st.dataframe(perf_df.style.background_gradient(cmap="Blues"))
-
-    # -------------------------------------------------
-    # RADAR CHART
-    # -------------------------------------------------
-    st.subheader("📊 Multi-Metric Radar Comparison")
-
-    fig_radar = go.Figure()
-
-    for _, row in perf_df.iterrows():
-        fig_radar.add_trace(go.Scatterpolar(
-            r=[
-                row["Accuracy"],
-                row["Precision"],
-                row["Recall"],
-                row["F1 Score"],
-                row["AUC"]
-            ],
-            theta=["Accuracy","Precision","Recall","F1","AUC"],
-            fill="toself",
-            name=row["Model"]
-        ))
-
-    fig_radar.update_layout(
-        polar=dict(radialaxis=dict(range=[0,1])),
-        showlegend=True
-    )
-
-    st.plotly_chart(fig_radar, use_container_width=True)
-
-    # -------------------------------------------------
-    # ROC CURVE
-    # -------------------------------------------------
-    st.subheader("ROC Curve Comparison")
-
-    fig_roc = go.Figure()
-
-    for data in roc_data:
-        fig_roc.add_trace(
-            go.Scatter(x=data["fpr"], y=data["tpr"], mode="lines", name=data["name"])
-        )
-
-    fig_roc.add_trace(
-        go.Scatter(x=[0,1], y=[0,1], line=dict(dash="dash"), name="Baseline")
-    )
-
-    st.plotly_chart(fig_roc, use_container_width=True)
-
-    # -------------------------------------------------
-    # CONFUSION MATRICES
-    # -------------------------------------------------
-    st.subheader("Confusion Matrices")
-
-    cm_cols = st.columns(len(comparison_mode))
-
-    for i, name in enumerate(comparison_mode):
-        with cm_cols[i]:
-            fig_cm = px.imshow(
-                cm_data[name],
-                text_auto=True,
-                color_continuous_scale="RdBu_r",
-                labels=dict(x="Predicted", y="Actual")
-            )
-            fig_cm.update_layout(title=name)
-            st.plotly_chart(fig_cm, use_container_width=True)
-
-    # -------------------------------------------------
-    # MODEL & DATA DRIFT DETECTION
-    # -------------------------------------------------
-    st.header("📉 Model & Data Drift Analysis")
-
-    drift_data = []
-
-    for _, row in perf_df.iterrows():
-
-        model_name = row["Model"]
-
-        baseline_f1 = baseline_metrics.get(model_name, {}).get("F1 Score", 0)
-        current_f1 = row["F1 Score"]
-
-        perf_drift = ((current_f1 - baseline_f1) / baseline_f1) * 100 if baseline_f1 else 0
-
-        # Data drift using BMI distribution
-        if "BMI" in train_df.columns and "BMI" in test_df.columns:
-            ks_stat, p_value = ks_2samp(train_df["BMI"], test_df["BMI"])
-        else:
-            p_value = 1.0
-
-        drift_data.append({
-            "Model": model_name,
-            "Baseline F1": baseline_f1,
-            "Current F1": current_f1,
-            "Drift %": perf_drift,
-            "Data Drift P-Value": p_value,
-            "Status": "⚠️ Retrain"
-                if perf_drift < -10 or p_value < 0.05
-                else "✅ Stable"
-        })
-
-    drift_df = pd.DataFrame(drift_data)
-
-    st.dataframe(drift_df)
-
-    # -------------------------------------------------
-    # DRIFT VISUALIZATION
-    # -------------------------------------------------
-    st.subheader("Performance Decay: Train vs Production")
-
-    fig_drift = go.Figure()
-
-    for _, row in drift_df.iterrows():
-        fig_drift.add_trace(
-            go.Scatter(
-                x=["Train","Production"],
-                y=[row["Baseline F1"], row["Current F1"]],
-                mode="lines+markers",
-                name=row["Model"]
-            )
-        )
-
-    fig_drift.update_layout(
-        yaxis_title="F1 Score",
-        hovermode="x unified"
-    )
-
-    st.plotly_chart(fig_drift, use_container_width=True)
+    st.info("Please upload a dataset or ensure the default dataset is available.")
